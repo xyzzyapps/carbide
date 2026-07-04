@@ -1,66 +1,75 @@
-//! Abstract Syntax Tree (AST) definitions for the Crust compiler.
+//! Abstract Syntax Tree definitions for the Carbide transpiler.
 //!
-//! Defines the intermediate representations of Crust programs, functions,
-//! structs, types, statements, and expressions.
+//! Only function and struct *signatures* are parsed structurally so that
+//! Carbide type-mapping and pointer-flip transformations can be applied
+//! precisely to declared types.  Everything else (function bodies, enum
+//! bodies, free-standing items) is stored as **verbatim source text** and
+//! emitted unchanged after type-name substitution.
 
-/// A complete Crust program consists of a sequence of top-level items.
+/// A complete Carbide program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub items: Vec<Item>,
 }
 
-/// A top-level item in a Crust program.
+/// A top-level item in a Carbide program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    /// A function declaration.
+    /// A function / procedure declaration.
     Fn(Function),
-    /// A struct declaration.
+    /// A struct declaration (fields parsed for type mapping).
     Struct(Struct),
-    /// A use import statement (e.g. `use core::ffi::*;`).
+    /// A `use` import.
     Use(String),
-    /// An enum declaration.
+    /// An enum declaration.  Body text is stored verbatim.
     Enum {
         name: String,
-        tokens: Vec<Token>,
+        /// Raw source text between `{` and `}`.
+        body: String,
     },
-    /// An impl block.
+    /// An `impl` block.  Methods are parsed so `proc`/`fn` transforms apply.
     Impl {
         target: String,
         methods: Vec<Function>,
     },
-    /// A generic raw item (e.g. const, static).
+    /// Any other top-level item (`const`, `static`, `type`, …).
+    /// Stored entirely as raw source text.
     Raw {
         attrs: Vec<Attribute>,
-        tokens: Vec<Token>,
+        src: String,
     },
 }
 
-/// An attribute prepended to an item (e.g. `#[repr(C)]`).
+/// An attribute attached to an item (e.g. `#[repr(C)]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attribute {
     pub tokens: String,
 }
 
-/// A parameter in a function signature.
+/// A function / procedure declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret_type: Option<Type>,
+    /// Raw source text of the function body (between outer `{` and `}`).
+    /// Type-name substitutions are applied to this string by the transform pass.
+    pub body_src: String,
+    /// True for `proc` (or explicit `unsafe fn`) → emitted as `unsafe fn`,
+    /// body executed in an inherently-unsafe context; no inner `unsafe {}` needed.
+    pub is_unsafe: bool,
+    pub abi: Option<String>,
+    pub attrs: Vec<Attribute>,
+}
+
+/// A function parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
 }
 
-/// A function declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Function {
-    pub name: String,
-    pub params: Vec<Param>,
-    pub ret_type: Option<Type>,
-    pub body: Block,
-    pub is_unsafe: bool,
-    pub abi: Option<String>,
-    pub attrs: Vec<Attribute>,
-}
-
-/// A field in a struct declaration.
+/// A struct field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
@@ -75,69 +84,23 @@ pub struct Struct {
     pub attrs: Vec<Attribute>,
 }
 
-/// Representation of types in the AST, supporting C primitives and pointers.
+/// A type expression in a signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
-    /// A C primitive type (e.g. `int`, `void`, `char`).
+    /// A standard Rust primitive (`i32`, `u8`, `bool`, …).
     Primitive(PrimitiveType),
-    /// A user-defined or standard Rust type (e.g. `MyStruct`, `i32`).
+    /// A user-defined or mapped C FFI type name.
     UserDefined(String),
-    /// A raw pointer type (postfix `*` or `const*` in Crust; e.g. `T*` or `T const*`).
-    Pointer {
-        base: Box<Type>,
-        is_const: bool,
-    },
-    /// A reference type (e.g. `&mut T` or `&T`).
-    Reference {
-        base: Box<Type>,
-        is_mut: bool,
-    },
-    /// An array type (e.g. `[T; N]`).
-    Array {
-        base: Box<Type>,
-        len: String,
-    },
+    /// A raw pointer (`*mut T` / `*const T`).
+    Pointer { base: Box<Type>, is_const: bool },
+    /// A reference (`&mut T` / `&T`).
+    Reference { base: Box<Type>, is_mut: bool },
+    /// An array (`[T; N]`).
+    Array { base: Box<Type>, len: String },
 }
 
-/// C and Rust primitive types supported in Crust.
-///
-/// C types are parsed as `Type::UserDefined` strings and mapped during
-/// the transform pass. Only standard Rust primitives use this enum.
+/// Standard Rust primitive type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrimitiveType {
-    /// Standard Rust primitive types (e.g. `i32`, `u64`, `f64`, `bool`).
     RustPrimitive(String),
-}
-
-/// A block of statements, which may be marked unsafe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    pub stmts: Vec<Stmt>,
-    pub is_unsafe: bool,
-}
-
-use crate::lexer::Token;
-
-/// A statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Stmt {
-    /// Local variable binding: `let [mut] name [: ty] [= init];`
-    Local {
-        name: String,
-        ty: Option<Type>,
-        init: Option<Vec<Token>>,
-        is_mut: bool,
-    },
-    /// An if-else conditional statement.
-    If {
-        cond: Vec<Token>,
-        then_branch: Block,
-        else_branch: Option<Block>,
-    },
-    /// A nested block of statements.
-    Block(Block),
-    /// A return statement.
-    Return(Option<Vec<Token>>),
-    /// A raw sequence of tokens representing any other statement.
-    Raw { tokens: Vec<Token>, has_semi: bool },
 }

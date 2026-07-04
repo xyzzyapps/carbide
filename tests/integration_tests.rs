@@ -36,7 +36,6 @@ fn test_integration_transpile_and_compile() {
     assert!(transpiled_code.contains("pub ptr: *mut c_int"));
     assert!(transpiled_code.contains("#[no_mangle]"));
     assert!(transpiled_code.contains("pub unsafe extern \"C\" fn compute(s: *const FfiStruct) -> c_int"));
-    assert!(transpiled_code.contains("unsafe {"));
 
     // 3. Run rustc on the generated code to compile as lib
     let lib_out = "libintegration_test.rlib";

@@ -1,9 +1,18 @@
-//! Lexer for the Crust language.
+//! Lexer for the Carbide language.
 //!
-//! Converts a Crust source string into a stream of tokens, recognizing C-style
-//! primitive type keywords and pointer-related symbols.
+//! Converts a Carbide source string into a flat stream of tokens.  The lexer
+//! only needs to recognise tokens that appear in *signatures* (function
+//! parameters, return types, struct fields) and at the structural top level
+//! (`fn`, `proc`, `struct`, `enum`, `impl`, `use`, `#[…]`).  Everything
+//! inside a function body is captured as verbatim source text by the parser,
+//! so the lexer does NOT need to understand operators, control-flow keywords,
+//! or expression syntax.
+//!
+//! The companion [`Lexer::tokenize_with_positions`] method returns each token
+//! together with its **start byte offset** in the source string.  The parser
+//! uses these offsets to slice out raw body text without re-scanning.
 
-/// Represent all possible tokens in the Crust language dialect.
+/// All tokens produced by the Carbide lexer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     // Keywords
@@ -22,96 +31,96 @@ pub enum Token {
     If,
     Else,
 
-    // C Primitive Keywords
+    // C primitive type keywords
     Void,
     Int,
     Uint,
     Long,
     Char,
 
-    // Identifiers & Literals
+    // Identifiers & literals
     Ident(String),
     IntLit(String),
     StrLit(String),
     CharLit(char),
 
-    // Symbols & Operators
-    Star,               // `*`
-    Ampersand,          // `&`
-    Arrow,              // `->`
-    Colon,              // `:`
-    DoubleColon,        // `::`
-    Semicolon,          // `;`
-    Comma,              // `,`
-    Eq,                 // `=`
-    EqEq,               // `==`
-    Plus,               // `+`
-    Minus,              // `-`
-    Slash,              // `/`
-    Pound,              // `#`
-    OpenParen,          // `(`
-    CloseParen,         // `)`
-    OpenBrace,          // `{`
-    CloseBrace,         // `}`
-    OpenBracket,        // `[`
-    CloseBracket,       // `]`
-    Dot,                // `.`
-    Bang,               // `!`
-    Lt,                 // `<`
-    Gt,                 // `>`
+    // Symbols & operators
+    Star,           // `*`
+    Ampersand,      // `&`
+    Arrow,          // `->`
+    Colon,          // `:`
+    DoubleColon,    // `::`
+    Semicolon,      // `;`
+    Comma,          // `,`
+    Eq,             // `=`
+    EqEq,           // `==`
+    Plus,           // `+`
+    Minus,          // `-`
+    Slash,          // `/`
+    Pound,          // `#`
+    OpenParen,      // `(`
+    CloseParen,     // `)`
+    OpenBrace,      // `{`
+    CloseBrace,     // `}`
+    OpenBracket,    // `[`
+    CloseBracket,   // `]`
+    Dot,            // `.`
+    Bang,           // `!`
+    Lt,             // `<`
+    Gt,             // `>`
 }
 
-/// A Lexer that processes the source string.
+/// Lexer for a Carbide source string.
 pub struct Lexer<'a> {
-    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    /// Character iterator that also yields byte positions.
+    chars: std::iter::Peekable<std::str::CharIndices<'a>>,
 }
 
 impl<'a> Lexer<'a> {
-    /// Creates a new Lexer for the given input.
+    /// Create a new Lexer for `input`.
     pub fn new(input: &'a str) -> Self {
-        Self {
-            chars: input.chars().peekable(),
-        }
+        Self { chars: input.char_indices().peekable() }
     }
 
-    /// Read next character.
-    fn next_char(&mut self) -> Option<char> {
+    /// Advance past the current character, returning it.
+    fn next_char(&mut self) -> Option<(usize, char)> {
         self.chars.next()
     }
 
-    /// Peek next character.
-    fn peek_char(&mut self) -> Option<&char> {
-        self.chars.peek()
+    /// Peek at the current character without consuming it.
+    fn peek_char(&mut self) -> Option<(usize, char)> {
+        self.chars.peek().copied()
     }
 
-    /// Scan all tokens.
-    pub fn tokenize(mut self) -> Result<Vec<Token>, String> {
-        let mut tokens = Vec::new();
-        while let Some(&c) = self.peek_char() {
+    /// Tokenize the source and return tokens together with their **start byte
+    /// offsets** in the original source string.
+    ///
+    /// The parser uses the offsets to slice raw function-body text verbatim.
+    pub fn tokenize_with_positions(mut self) -> Result<Vec<(Token, usize)>, String> {
+        let mut tokens: Vec<(Token, usize)> = Vec::new();
+
+        while let Some((pos, c)) = self.peek_char() {
+            // Whitespace
             if c.is_whitespace() {
                 self.next_char();
                 continue;
             }
 
-            // Handle comments
+            // Line and block comments
             if c == '/' {
                 self.next_char();
-                if let Some(&'/') = self.peek_char() {
-                    // Line comment
+                if let Some((_, '/')) = self.peek_char() {
                     self.next_char();
-                    while let Some(nc) = self.next_char() {
-                        if nc == '\n' {
-                            break;
-                        }
+                    while let Some((_, nc)) = self.next_char() {
+                        if nc == '\n' { break; }
                     }
                     continue;
-                } else if let Some(&'*') = self.peek_char() {
-                    // Block comment
+                } else if let Some((_, '*')) = self.peek_char() {
                     self.next_char();
                     let mut closed = false;
-                    while let Some(nc) = self.next_char() {
+                    while let Some((_, nc)) = self.next_char() {
                         if nc == '*' {
-                            if let Some(&'/') = self.peek_char() {
+                            if let Some((_, '/')) = self.peek_char() {
                                 self.next_char();
                                 closed = true;
                                 break;
@@ -123,70 +132,71 @@ impl<'a> Lexer<'a> {
                     }
                     continue;
                 } else {
-                    tokens.push(Token::Slash);
+                    tokens.push((Token::Slash, pos));
                     continue;
                 }
             }
 
-            // Handle identifiers and keywords
+            // Identifiers and keywords
             if c.is_alphabetic() || c == '_' {
+                let start = pos;
                 let mut ident = String::new();
-                ident.push(self.next_char().unwrap());
-                while let Some(&nc) = self.peek_char() {
+                while let Some((_, nc)) = self.peek_char() {
                     if nc.is_alphanumeric() || nc == '_' {
-                        ident.push(self.next_char().unwrap());
+                        ident.push(self.next_char().unwrap().1);
                     } else {
                         break;
                     }
                 }
-
-                let token = match ident.as_str() {
-                    "fn" => Token::Fn,
-                    "proc" => Token::Proc,
+                let tok = match ident.as_str() {
+                    "fn"     => Token::Fn,
+                    "proc"   => Token::Proc,
                     "struct" => Token::Struct,
-                    "let" => Token::Let,
-                    "mut" => Token::Mut,
-                    "const" => Token::Const,
+                    "let"    => Token::Let,
+                    "mut"    => Token::Mut,
+                    "const"  => Token::Const,
                     "return" => Token::Return,
                     "extern" => Token::Extern,
                     "unsafe" => Token::Unsafe,
-                    "use" => Token::Use,
-                    "impl" => Token::Impl,
-                    "as" => Token::As,
-                    "if" => Token::If,
-                    "else" => Token::Else,
-                    "void" => Token::Void,
-                    "int" => Token::Int,
-                    "uint" => Token::Uint,
-                    "long" => Token::Long,
-                    "char" => Token::Char,
-                    _ => Token::Ident(ident),
+                    "use"    => Token::Use,
+                    "impl"   => Token::Impl,
+                    "as"     => Token::As,
+                    "if"     => Token::If,
+                    "else"   => Token::Else,
+                    "void"   => Token::Void,
+                    "int"    => Token::Int,
+                    "uint"   => Token::Uint,
+                    "long"   => Token::Long,
+                    "char"   => Token::Char,
+                    _        => Token::Ident(ident),
                 };
-                tokens.push(token);
+                tokens.push((tok, start));
                 continue;
             }
 
-            // Handle digits (integer literals)
+            // Integer literals
             if c.is_ascii_digit() {
+                let start = pos;
                 let mut num = String::new();
-                while let Some(&nc) = self.peek_char() {
+                while let Some((_, nc)) = self.peek_char() {
                     if nc.is_ascii_digit() {
-                        num.push(self.next_char().unwrap());
+                        num.push(self.next_char().unwrap().1);
                     } else {
                         break;
                     }
                 }
-                tokens.push(Token::IntLit(num));
+                tokens.push((Token::IntLit(num), start));
                 continue;
             }
 
-            // Handle string literals
+            // String literals
             if c == '"' {
-                self.next_char(); // Consume opening quote
+                let start = pos;
+                self.next_char();
                 let mut s = String::new();
                 let mut escaped = false;
                 let mut closed = false;
-                while let Some(nc) = self.next_char() {
+                while let Some((_, nc)) = self.next_char() {
                     if escaped {
                         s.push(nc);
                         escaped = false;
@@ -202,80 +212,88 @@ impl<'a> Lexer<'a> {
                 if !closed {
                     return Err("Unterminated string literal".to_string());
                 }
-                tokens.push(Token::StrLit(s));
+                tokens.push((Token::StrLit(s), start));
                 continue;
             }
 
-            // Handle char literals
+            // Char literals
             if c == '\'' {
-                self.next_char(); // Consume opening single quote
+                let start = pos;
+                self.next_char();
                 let val = match self.next_char() {
-                    Some('\\') => match self.next_char() {
-                        Some('n') => '\n',
-                        Some('r') => '\r',
-                        Some('t') => '\t',
-                        Some('0') => '\0',
-                        Some(escaped) => escaped,
+                    Some((_, '\\')) => match self.next_char() {
+                        Some((_, 'n'))  => '\n',
+                        Some((_, 'r'))  => '\r',
+                        Some((_, 't'))  => '\t',
+                        Some((_, '0'))  => '\0',
+                        Some((_, esc))  => esc,
                         None => return Err("Unterminated char literal escape".to_string()),
                     },
-                    Some(other) => other,
+                    Some((_, other)) => other,
                     None => return Err("Empty or unterminated char literal".to_string()),
                 };
-                if self.next_char() != Some('\'') {
+                if self.next_char().map(|(_, c)| c) != Some('\'') {
                     return Err("Expected closing single quote for char literal".to_string());
                 }
-                tokens.push(Token::CharLit(val));
+                tokens.push((Token::CharLit(val), start));
                 continue;
             }
 
-            // Handle operators and punctuation symbols
-            let current = self.next_char().unwrap();
+            // Single-character and two-character operators / punctuation
+            let (cur_pos, current) = self.next_char().unwrap();
             match current {
                 ':' => {
-                    if let Some(&':') = self.peek_char() {
+                    if let Some((_, ':')) = self.peek_char() {
                         self.next_char();
-                        tokens.push(Token::DoubleColon);
+                        tokens.push((Token::DoubleColon, cur_pos));
                     } else {
-                        tokens.push(Token::Colon);
+                        tokens.push((Token::Colon, cur_pos));
                     }
                 }
                 '-' => {
-                    if let Some(&'>') = self.peek_char() {
+                    if let Some((_, '>')) = self.peek_char() {
                         self.next_char();
-                        tokens.push(Token::Arrow);
+                        tokens.push((Token::Arrow, cur_pos));
                     } else {
-                        tokens.push(Token::Minus);
+                        tokens.push((Token::Minus, cur_pos));
                     }
                 }
                 '=' => {
-                    if let Some(&'=') = self.peek_char() {
+                    if let Some((_, '=')) = self.peek_char() {
                         self.next_char();
-                        tokens.push(Token::EqEq);
+                        tokens.push((Token::EqEq, cur_pos));
                     } else {
-                        tokens.push(Token::Eq);
+                        tokens.push((Token::Eq, cur_pos));
                     }
                 }
-                '*' => tokens.push(Token::Star),
-                '&' => tokens.push(Token::Ampersand),
-                ';' => tokens.push(Token::Semicolon),
-                ',' => tokens.push(Token::Comma),
-                '+' => tokens.push(Token::Plus),
-                '#' => tokens.push(Token::Pound),
-                '(' => tokens.push(Token::OpenParen),
-                ')' => tokens.push(Token::CloseParen),
-                '{' => tokens.push(Token::OpenBrace),
-                '}' => tokens.push(Token::CloseBrace),
-                '[' => tokens.push(Token::OpenBracket),
-                ']' => tokens.push(Token::CloseBracket),
-                '.' => tokens.push(Token::Dot),
-                '!' => tokens.push(Token::Bang),
-                '<' => tokens.push(Token::Lt),
-                '>' => tokens.push(Token::Gt),
+                '*'  => tokens.push((Token::Star,         cur_pos)),
+                '&'  => tokens.push((Token::Ampersand,    cur_pos)),
+                ';'  => tokens.push((Token::Semicolon,    cur_pos)),
+                ','  => tokens.push((Token::Comma,        cur_pos)),
+                '+'  => tokens.push((Token::Plus,         cur_pos)),
+                '#'  => tokens.push((Token::Pound,        cur_pos)),
+                '('  => tokens.push((Token::OpenParen,    cur_pos)),
+                ')'  => tokens.push((Token::CloseParen,   cur_pos)),
+                '{'  => tokens.push((Token::OpenBrace,    cur_pos)),
+                '}'  => tokens.push((Token::CloseBrace,   cur_pos)),
+                '['  => tokens.push((Token::OpenBracket,  cur_pos)),
+                ']'  => tokens.push((Token::CloseBracket, cur_pos)),
+                '.'  => tokens.push((Token::Dot,          cur_pos)),
+                '!'  => tokens.push((Token::Bang,         cur_pos)),
+                '<'  => tokens.push((Token::Lt,           cur_pos)),
+                '>'  => tokens.push((Token::Gt,           cur_pos)),
                 other => return Err(format!("Unexpected character: '{}'", other)),
             }
         }
 
         Ok(tokens)
+    }
+
+    /// Tokenize the source, returning only the tokens (positions discarded).
+    ///
+    /// Used by unit tests that don't need source-slicing.
+    pub fn tokenize(self) -> Result<Vec<Token>, String> {
+        Ok(self.tokenize_with_positions()?.into_iter().map(|(t, _)| t).collect())
     }
 }
 
@@ -286,8 +304,7 @@ mod tests {
     #[test]
     fn test_lex_primitives_and_pointers() {
         let source = "int* p; char const* s; void** q;";
-        let lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().unwrap();
+        let tokens = Lexer::new(source).tokenize().unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -312,8 +329,7 @@ mod tests {
     #[test]
     fn test_lex_function() {
         let source = "fn add(x: int, y: int*) -> int { return x + *y; }";
-        let lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().unwrap();
+        let tokens = Lexer::new(source).tokenize().unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -351,8 +367,7 @@ mod tests {
             /* block comment */
             let c = 'a';
         "#;
-        let lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().unwrap();
+        let tokens = Lexer::new(source).tokenize().unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -373,8 +388,7 @@ mod tests {
     #[test]
     fn test_lex_proc() {
         let source = "proc run() {}";
-        let lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().unwrap();
+        let tokens = Lexer::new(source).tokenize().unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -388,4 +402,3 @@ mod tests {
         );
     }
 }
-

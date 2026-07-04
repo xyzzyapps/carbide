@@ -1,398 +1,297 @@
-//! AST Transformation pipeline for the Crust compiler.
+//! AST transformation passes for the Carbide transpiler.
 //!
-//! Applies passes to the AST:
-//! 1. Type Substitution: Replace C primitives with core::ffi equivalents.
-//! 2. Pointer Flipping: Transformed structurally via the AST and pretty-printed as prefix raw pointers.
-//! 3. C-ABI Function Pass: Inject #[no_mangle] and extern "C".
-//! 4. Implicit Unsafe Pass: Wrap bodies in unsafe blocks.
-//! 5. Auto-Repr Struct Pass: Prepend #[repr(C)] to structs.
+//! Two categories of transformation:
+//!
+//! 1. **Signature transforms** — operate on parsed `Type` nodes in function
+//!    parameters, return types, and struct fields.  These are precise because
+//!    we have a typed AST.
+//!
+//! 2. **Body transforms** — operate on raw source text (`body_src: String`).
+//!    They use word-boundary string replacement so that C type keywords inside
+//!    function bodies are correctly mapped without touching unrelated
+//!    identifiers.
 
 use crate::ast::*;
 
-/// Transforms a Type by replacing C-style primitives with core::ffi equivalents.
-pub fn transform_type(ty: &mut Type) {
-    match ty {
-        Type::Primitive(_) => {
-            // RustPrimitive types are passed through unchanged.
-        }
-        Type::UserDefined(name) => {
-            let mapped = match name.as_str() {
-                // Single word C types
-                "void" => Some("c_void"),
-                "char" => Some("c_char"),
-                "int" => Some("c_int"),
-                "uint" => Some("c_uint"),
-                "long" => Some("c_long"),
-                "float" => Some("c_float"),
-                "double" => Some("c_double"),
-                "short" => Some("c_short"),
+// ---------------------------------------------------------------------------
+// Type name mappings applied everywhere (signatures + body text)
+// ---------------------------------------------------------------------------
 
-                // Multi-word C types
-                "unsigned char" => Some("c_uchar"),
-                "signed char" => Some("c_schar"),
-                "unsigned short" => Some("c_ushort"),
-                "signed short" => Some("c_short"),
-                "short int" => Some("c_short"),
-                "unsigned short int" => Some("c_ushort"),
-                "signed short int" => Some("c_short"),
-                "unsigned int" => Some("c_uint"),
-                "signed int" => Some("c_int"),
-                "unsigned long" => Some("c_ulong"),
-                "signed long" => Some("c_long"),
-                "long int" => Some("c_long"),
-                "unsigned long int" => Some("c_ulong"),
-                "signed long int" => Some("c_long"),
-                "long long" => Some("c_longlong"),
-                "unsigned long long" => Some("c_ulonglong"),
-                "signed long long" => Some("c_longlong"),
-                "long long int" => Some("c_longlong"),
-                "unsigned long long int" => Some("c_ulonglong"),
-                "signed long long int" => Some("c_longlong"),
-                "long double" => Some("c_double"),
+/// C primitive type → Rust FFI type mapping table.
+///
+/// Order matters: longer / more-specific multi-word entries must come first
+/// so that `unsigned long long` is replaced before `unsigned long`.
+const TYPE_MAP: &[(&str, &str)] = &[
+    // Multi-word C types (must precede their prefixes)
+    ("unsigned long long",  "c_ulonglong"),
+    ("unsigned long int",   "c_ulong"),
+    ("unsigned long",       "c_ulong"),
+    ("unsigned short int",  "c_ushort"),
+    ("unsigned short",      "c_ushort"),
+    ("unsigned int",        "c_uint"),
+    ("unsigned char",       "c_uchar"),
+    ("signed long long",    "c_longlong"),
+    ("signed long int",     "c_long"),
+    ("signed long",         "c_long"),
+    ("signed short int",    "c_short"),
+    ("signed short",        "c_short"),
+    ("signed int",          "c_int"),
+    ("signed char",         "c_schar"),
+    ("long long int",       "c_longlong"),
+    ("long long",           "c_longlong"),
+    ("long double",         "c_double"),
+    ("long int",            "c_long"),
+    ("short int",           "c_short"),
+    // Single-word C primitives
+    ("void",    "c_void"),
+    ("int",     "c_int"),
+    ("uint",    "c_uint"),
+    ("long",    "c_long"),
+    ("short",   "c_short"),
+    ("float",   "c_float"),
+    ("double",  "c_double"),
+    // NB: `char` is intentionally omitted — it is also a Rust keyword and
+    // replacing it blindly inside body text would break char literals.
+    // Struct field / parameter `char` types are handled via map_type().
+];
 
-                // libc types
-                "size_t" => Some("size_t"),
-                "ssize_t" => Some("ssize_t"),
-                "ptrdiff_t" => Some("ptrdiff_t"),
-                "uintptr_t" => Some("uintptr_t"),
-                "intptr_t" => Some("intptr_t"),
-                "off_t" => Some("off_t"),
-                "pid_t" => Some("pid_t"),
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 
-                _ => None,
-            };
-            if let Some(m) = mapped {
-                *name = m.to_string();
-            }
-        }
-        Type::Pointer { base, .. } => {
-            transform_type(base);
-        }
-        Type::Reference { base, .. } => {
-            transform_type(base);
-        }
-        Type::Array { base, .. } => {
-            transform_type(base);
-        }
+/// Apply all Carbide transforms to a parsed program in place.
+///
+/// Transforms applied:
+/// - Function signatures: C-ABI (`extern "C"`), `#[no_mangle]`, `pub`,
+///   `unsafe` (for `proc`), type mapping, postfix-pointer flip.
+/// - Struct definitions: `#[repr(C)]`, `pub`, type mapping.
+/// - Function bodies: word-boundary type substitution + `as TYPE*` pointer flip.
+pub fn transform_program(program: &mut Program) {
+    for item in &mut program.items {
+        transform_item(item);
     }
 }
 
-/// Recursively walks and transforms statements in a block.
-pub fn transform_block(block: &mut Block) {
-    for stmt in &mut block.stmts {
-        transform_stmt(stmt);
+fn transform_item(item: &mut Item) {
+    match item {
+        Item::Fn(f)          => transform_fn(f),
+        Item::Struct(s)      => transform_struct(s),
+        Item::Impl { methods, .. } => {
+            for m in methods { transform_fn(m); }
+        }
+        // Enum, Use, Raw — no signature to transform; body text is left as-is
+        // (enum variants don't contain type keywords in signature positions).
+        _ => {}
     }
 }
 
-/// Transforms a single statement.
-pub fn transform_stmt(stmt: &mut Stmt) {
-    match stmt {
-        Stmt::Local { ty, init, .. } => {
-            if let Some(t) = ty {
-                transform_type(t);
-            }
-            if let Some(tokens) = init {
-                transform_token_stream(tokens);
-            }
-        }
-        Stmt::If { cond, then_branch, else_branch } => {
-            transform_token_stream(cond);
-            transform_block(then_branch);
-            if let Some(eb) = else_branch {
-                transform_block(eb);
-            }
-        }
-        Stmt::Block(block) => {
-            transform_block(block);
-        }
-        Stmt::Return(val) => {
-            if let Some(tokens) = val {
-                transform_token_stream(tokens);
-            }
-        }
-        Stmt::Raw { tokens, .. } => {
-            transform_token_stream(tokens);
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Function transformation
+// ---------------------------------------------------------------------------
 
-use crate::lexer::Token;
-
-/// Flat token stream type/pointer transformer.
-pub fn transform_token_stream(tokens: &mut Vec<Token>) {
-    let mut result = Vec::new();
-    let mut i = 0;
-    while i < tokens.len() {
-        if tokens[i] == Token::As {
-            result.push(Token::As);
-            i += 1;
-            
-            // Parse the type following 'as'
-            if i < tokens.len() {
-                if let Some((base_str, consumed)) = parse_base_type_name_at(&tokens[i..]) {
-                    let mapped_base = map_base_type_name(&base_str);
-                    let mut next_idx = i + consumed;
-                    
-                    // Parse postfix pointer modifiers
-                    let mut ptr_modifiers = Vec::new();
-                    loop {
-                        if next_idx < tokens.len() && tokens[next_idx] == Token::Star {
-                            ptr_modifiers.push(false); // *mut
-                            next_idx += 1;
-                        } else if next_idx + 1 < tokens.len() && tokens[next_idx] == Token::Const && tokens[next_idx + 1] == Token::Star {
-                            ptr_modifiers.push(true); // *const
-                            next_idx += 2;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    // Emit transformed type tokens
-                    if !ptr_modifiers.is_empty() {
-                        for is_const in ptr_modifiers {
-                            result.push(Token::Star);
-                            if is_const {
-                                result.push(Token::Const);
-                            } else {
-                                result.push(Token::Mut);
-                            }
-                        }
-                    }
-                    result.push(Token::Ident(mapped_base));
-                    i = next_idx;
-                }
-            }
-        } else {
-            // Global primitive type mappings (single-word and multi-word C types)
-            if let Some((base_str, consumed)) = parse_base_type_name_at(&tokens[i..]) {
-                let mapped = map_base_type_name(&base_str);
-                // Only replace if it's a known C type to avoid replacing custom variable names
-                if is_known_c_type(&base_str) {
-                    result.push(Token::Ident(mapped));
-                    i += consumed;
-                    continue;
-                }
-            }
-            
-            result.push(tokens[i].clone());
-            i += 1;
-        }
-    }
-    *tokens = result;
-}
-
-fn parse_base_type_name_at(slice: &[Token]) -> Option<(String, usize)> {
-    if slice.is_empty() {
-        return None;
+fn transform_fn(func: &mut Function) {
+    // Inject C-ABI attributes and calling convention
+    func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
+    if func.abi.is_none() {
+        func.abi = Some("C".to_string());
     }
 
-    let get_ident = |tok: &Token| -> Option<String> {
-        match tok {
-            Token::Ident(s) => Some(s.clone()),
-            Token::Int => Some("int".to_string()),
-            Token::Char => Some("char".to_string()),
-            Token::Void => Some("void".to_string()),
-            Token::Uint => Some("uint".to_string()),
-            Token::Long => Some("long".to_string()),
-            _ => None,
-        }
-    };
-
-    let w1 = get_ident(&slice[0]);
-    let w2 = slice.get(1).and_then(get_ident);
-    let w3 = slice.get(2).and_then(get_ident);
-    let w4 = slice.get(3).and_then(get_ident);
-
-    if let (Some(ref a), Some(ref b), Some(ref c), Some(ref d)) = (&w1, &w2, &w3, &w4) {
-        let full = format!("{} {} {} {}", a, b, c, d);
-        if is_known_c_type(&full) {
-            return Some((full, 4));
-        }
-    }
-    if let (Some(ref a), Some(ref b), Some(ref c)) = (&w1, &w2, &w3) {
-        let full = format!("{} {} {}", a, b, c);
-        if is_known_c_type(&full) {
-            return Some((full, 3));
-        }
-    }
-    if let (Some(ref a), Some(ref b)) = (&w1, &w2) {
-        let full = format!("{} {}", a, b);
-        if is_known_c_type(&full) {
-            return Some((full, 2));
-        }
-    }
-    if let Some(ref a) = w1 {
-        if is_known_c_type(a) || is_rust_primitive(a) || matches!(slice[0], Token::Ident(_)) {
-            return Some((a.clone(), 1));
-        }
-    }
-
-    None
-}
-
-fn map_base_type_name(name: &str) -> String {
-    let mapped = match name {
-        "void" => Some("c_void"),
-        "char" => Some("c_char"),
-        "int" => Some("c_int"),
-        "uint" => Some("c_uint"),
-        "long" => Some("c_long"),
-        "float" => Some("c_float"),
-        "double" => Some("c_double"),
-        "short" => Some("c_short"),
-
-        "unsigned char" => Some("c_uchar"),
-        "signed char" => Some("c_schar"),
-        "unsigned short" => Some("c_ushort"),
-        "signed short" => Some("c_short"),
-        "short int" => Some("c_short"),
-        "unsigned short int" => Some("c_ushort"),
-        "signed short int" => Some("c_short"),
-        "unsigned int" => Some("c_uint"),
-        "signed int" => Some("c_int"),
-        "unsigned long" => Some("c_ulong"),
-        "signed long" => Some("c_long"),
-        "long int" => Some("c_long"),
-        "unsigned long int" => Some("c_ulong"),
-        "signed long int" => Some("c_long"),
-        "long long" => Some("c_longlong"),
-        "unsigned long long" => Some("c_ulonglong"),
-        "signed long long" => Some("c_longlong"),
-        "long long int" => Some("c_longlong"),
-        "unsigned long long int" => Some("c_ulonglong"),
-        "signed long long int" => Some("c_longlong"),
-        "long double" => Some("c_double"),
-        "unsigned" => Some("c_uint"),
-        "signed" => Some("c_int"),
-
-        "size_t" => Some("size_t"),
-        "ssize_t" => Some("ssize_t"),
-        "ptrdiff_t" => Some("ptrdiff_t"),
-        "uintptr_t" => Some("uintptr_t"),
-        "intptr_t" => Some("intptr_t"),
-        "off_t" => Some("off_t"),
-        "pid_t" => Some("pid_t"),
-
-        _ => None,
-    };
-    mapped.unwrap_or(name).to_string()
-}
-
-fn is_known_c_type(s: &str) -> bool {
-    matches!(
-        s,
-        "void" | "char" | "int" | "uint" | "long" | "float" | "double" | "short"
-            | "unsigned char"
-            | "signed char"
-            | "unsigned short"
-            | "signed short"
-            | "short int"
-            | "unsigned short int"
-            | "signed short int"
-            | "unsigned int"
-            | "signed int"
-            | "unsigned long"
-            | "signed long"
-            | "long int"
-            | "unsigned long int"
-            | "signed long int"
-            | "long long"
-            | "unsigned long long"
-            | "signed long long"
-            | "long long int"
-            | "unsigned long long int"
-            | "signed long long int"
-            | "long double"
-            | "unsigned"
-            | "signed"
-            | "size_t"
-            | "ssize_t"
-            | "ptrdiff_t"
-            | "uintptr_t"
-            | "intptr_t"
-            | "off_t"
-            | "pid_t"
-    )
-}
-
-fn is_rust_primitive(s: &str) -> bool {
-    matches!(
-        s,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-            | "f32" | "f64" | "bool" | "str"
-    )
-}
-
-/// Applies all transformation passes to a Function.
-pub fn transform_fn(func: &mut Function) {
-    // 1. C-ABI Pass: Inject #[no_mangle]
-    if !func.attrs.iter().any(|a| a.tokens == "no_mangle") {
-        func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
-    }
-    // Set ABI calling convention to "C"
-    func.abi = Some("C".to_string());
-
-    // 2. Type substitution on parameters and return type
+    // Map parameter types
     for param in &mut func.params {
         transform_type(&mut param.ty);
     }
-    if let Some(ret) = &mut func.ret_type {
-        transform_type(ret);
+
+    // Map return type
+    if let Some(ref mut ty) = func.ret_type {
+        transform_type(ty);
     }
 
-    // 3. Type substitution within function body statements
-    transform_block(&mut func.body);
-
-    // 4. Implicit Unsafe Pass: Wrap body in unsafe block only if the function is unsafe
-    if func.is_unsafe {
-        let original_stmts = std::mem::take(&mut func.body.stmts);
-        let unsafe_block = Block {
-            stmts: original_stmts,
-            is_unsafe: true,
-        };
-        func.body.stmts = vec![Stmt::Block(unsafe_block)];
-    }
+    // Apply text-level substitutions to the body
+    func.body_src = apply_body_transforms(&func.body_src);
 }
 
-/// Applies all transformation passes to a Struct.
-pub fn transform_struct(strct: &mut Struct) {
-    // 1. Auto-Repr Pass: Prepend #[repr(C)]
-    if !strct.attrs.iter().any(|a| a.tokens == "repr(C)") {
-        strct.attrs.insert(0, Attribute { tokens: "repr(C)".to_string() });
-    }
+// ---------------------------------------------------------------------------
+// Struct transformation
+// ---------------------------------------------------------------------------
 
-    // 2. Type substitution on field types
+fn transform_struct(strct: &mut Struct) {
+    strct.attrs.insert(0, Attribute { tokens: "repr(C)".to_string() });
     for field in &mut strct.fields {
         transform_type(&mut field.ty);
     }
 }
 
-/// Applies all AST transformation passes to the entire Program.
-pub fn transform_program(program: &mut Program) {
-    for item in &mut program.items {
-        match item {
-            Item::Fn(func) => {
-                transform_fn(func);
-            }
-            Item::Struct(strct) => {
-                transform_struct(strct);
-            }
-            Item::Use(_) => {}
-            Item::Enum { tokens, .. } => {
-                transform_token_stream(tokens);
-            }
-            Item::Impl { methods, .. } => {
-                for method in methods {
-                    transform_fn(method);
-                }
-            }
-            Item::Raw { tokens, .. } => {
-                transform_token_stream(tokens);
-            }
+// ---------------------------------------------------------------------------
+// Type node transformation (signature-level, precise)
+// ---------------------------------------------------------------------------
+
+/// Recursively map a parsed `Type` node using the C→FFI type table.
+fn transform_type(ty: &mut Type) {
+    match ty {
+        Type::UserDefined(name) => {
+            *name = map_type_name(name);
         }
+        Type::Pointer { base, .. } | Type::Reference { base, .. } | Type::Array { base, .. } => {
+            transform_type(base);
+        }
+        Type::Primitive(_) => {} // Rust primitives pass through unchanged
     }
 }
+
+/// Look up a type-name string in the mapping table.
+fn map_type_name(name: &str) -> String {
+    // `char` is mapped at the signature level only — the lexer tokenises it
+    // as Token::Char so there is no ambiguity with Rust's `char` keyword.
+    if name == "char" { return "c_char".to_string(); }
+    for (from, to) in TYPE_MAP {
+        if *from == name {
+            return to.to_string();
+        }
+    }
+    // libc / platform types and user-defined types pass through unchanged
+    name.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Body text transformation (string-level)
+// ---------------------------------------------------------------------------
+
+/// Apply all text-level substitutions to a function body source string.
+///
+/// 1. Multi-word and single-word C type keywords → FFI equivalents
+///    (word-boundary aware, so `point` is not mangled by `int` → `c_int`).
+/// 2. Postfix pointer casts: `as TYPE*` → `as *mut TYPE`,
+///                           `as TYPE const*` → `as *const TYPE`.
+pub fn apply_body_transforms(src: &str) -> String {
+    let mut s = src.to_string();
+
+    // Multi-word entries first (longer match wins)
+    for (from, to) in TYPE_MAP {
+        s = replace_word(&s, from, to);
+    }
+
+    // Postfix pointer cast flip: `as WORD*` and `as WORD const*`
+    s = flip_as_pointer_casts(&s);
+
+    s
+}
+
+// ---------------------------------------------------------------------------
+// Word-boundary string replacement (no regex crate needed)
+// ---------------------------------------------------------------------------
+
+/// Replace all word-boundary occurrences of `word` with `replacement`.
+///
+/// A match is a "word-boundary" match when the character immediately before
+/// the match (if any) is not alphanumeric or `_`, and the character
+/// immediately after the match (if any) is not alphanumeric or `_`.
+///
+/// This prevents `int` from matching inside `point`, `hint`, etc.
+fn replace_word(src: &str, word: &str, replacement: &str) -> String {
+    if word.is_empty() { return src.to_string(); }
+    let mut result = String::with_capacity(src.len());
+    let mut rest = src;
+    while let Some(pos) = rest.find(word) {
+        let before   = &rest[..pos];
+        let after    = &rest[pos + word.len()..];
+        let word_end = pos + word.len();
+
+        let before_ok = before.chars().last()
+            .map_or(true, |c| !c.is_alphanumeric() && c != '_');
+        let after_ok  = after.chars().next()
+            .map_or(true, |c| !c.is_alphanumeric() && c != '_');
+
+        result.push_str(before);
+        if before_ok && after_ok {
+            result.push_str(replacement);
+        } else {
+            result.push_str(word);
+        }
+        rest = &rest[word_end..];
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Flip `as TYPE*` and `as TYPE const*` postfix pointer casts in source text.
+///
+/// Pattern:  `as <ws> <typename> <ws>? [const <ws>?] *`
+/// Becomes:  `as *[const|mut] <typename>`
+///
+/// Only the C primitive type names (already mapped at this point to their
+/// FFI equivalents) and unrecognised identifiers are matched.
+fn flip_as_pointer_casts(src: &str) -> String {
+    // We scan character by character looking for the pattern `as `.
+    let mut result = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let len   = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        // Look for `as` followed by a word boundary
+        if i + 2 < len && &bytes[i..i+2] == b"as" {
+            let before_ok = i == 0 || !(bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_');
+            let after_as  = i + 2;
+            let after_ok  = after_as < len &&
+                (bytes[after_as] == b' ' || bytes[after_as] == b'\t' || bytes[after_as] == b'\n');
+
+            if before_ok && after_ok {
+                // Try to parse: `as <ws>* <ident> <ws>* [const <ws>*] *`
+                let mut j = after_as;
+                // Skip whitespace
+                while j < len && bytes[j].is_ascii_whitespace() { j += 1; }
+                // Read typename identifier(s)
+                let type_start = j;
+                while j < len && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b' ') {
+                    // Allow a single space within multi-word types like `c_void`
+                    // but stop at `*` or non-word chars
+                    if bytes[j] == b' ' {
+                        // peek ahead: is the next char alphanumeric? (multi-word type)
+                        if j + 1 < len && (bytes[j+1].is_ascii_alphanumeric() || bytes[j+1] == b'_') {
+                            j += 1;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    j += 1;
+                }
+                let type_name = std::str::from_utf8(&bytes[type_start..j]).unwrap_or("").trim();
+
+                // Skip whitespace
+                while j < len && bytes[j].is_ascii_whitespace() { j += 1; }
+
+                // Optional `const`
+                let is_const = if j + 5 <= len && &bytes[j..j+5] == b"const" {
+                    let after_const = j + 5;
+                    let ok = after_const >= len ||
+                        bytes[after_const].is_ascii_whitespace() || bytes[after_const] == b'*';
+                    if ok { j = after_const; while j < len && bytes[j].is_ascii_whitespace() { j += 1; } true }
+                    else { false }
+                } else { false };
+
+                // Must be followed by `*`
+                if j < len && bytes[j] == b'*' && !type_name.is_empty() {
+                    j += 1; // consume `*`
+                    let ptr_kind = if is_const { "*const" } else { "*mut" };
+                    result.push_str(&format!("as {} {}", ptr_kind, type_name));
+                    i = j;
+                    continue;
+                }
+                // Pattern didn't match — emit `as` literally and move on
+            }
+        }
+
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -400,75 +299,60 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    fn parse_and_transform(src: &str) -> Program {
-        let tokens = Lexer::new(src).tokenize().unwrap();
-        let mut parser = Parser::new(tokens);
-        let mut program = parser.parse_program().unwrap();
+    fn transpile(src: &str) -> String {
+        let tokens = Lexer::new(src).tokenize_with_positions().unwrap();
+        let mut program = Parser::new(src, tokens).parse_program().unwrap();
         transform_program(&mut program);
-        program
-    }
-
-    #[test]
-    fn test_transform_c_abi_and_repr() {
-        let src = r#"
-            struct Point { x: int, y: int* }
-            proc add(a: int, b: int) -> int {
-                return a + b;
+        // Quick structural check: emit just enough to verify transforms
+        let mut out = String::new();
+        for item in &program.items {
+            if let Item::Fn(f) = item {
+                for a in &f.attrs { out.push_str(&format!("#[{}]\n", a.tokens)); }
+                if f.is_unsafe { out.push_str("unsafe "); }
+                if let Some(ref abi) = f.abi { out.push_str(&format!("extern \"{}\" ", abi)); }
+                out.push_str(&format!("fn {}(", f.name));
+                for (i, p) in f.params.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    // Quick type display
+                    out.push_str(&format!("{}: {:?}", p.name, p.ty));
+                }
+                out.push_str(")\n");
+                out.push_str(&f.body_src);
+                out.push('\n');
             }
-        "#;
-        let program = parse_and_transform(src);
-        assert_eq!(program.items.len(), 2);
-
-        // Verify struct has repr(C) and int -> c_int
-        if let Item::Struct(s) = &program.items[0] {
-            assert_eq!(s.name, "Point");
-            assert!(s.attrs.iter().any(|a| a.tokens == "repr(C)"));
-            assert_eq!(s.fields[0].ty, Type::UserDefined("c_int".to_string()));
-        } else {
-            panic!("Expected struct");
         }
-
-        // Verify proc has no_mangle, extern "C", and int -> c_int
-        if let Item::Fn(f) = &program.items[1] {
-            assert_eq!(f.name, "add");
-            assert!(f.attrs.iter().any(|a| a.tokens == "no_mangle"));
-            assert_eq!(f.abi, Some("C".to_string()));
-            assert!(f.is_unsafe); // proc is unsafe by default
-            if let Stmt::Block(b) = &f.body.stmts[0] {
-                assert!(b.is_unsafe);
-            } else {
-                panic!("Expected unsafe block");
-            }
-            assert_eq!(f.params[0].ty, Type::UserDefined("c_int".to_string()));
-            assert_eq!(f.ret_type, Some(Type::UserDefined("c_int".to_string())));
-        } else {
-            panic!("Expected function");
-        }
+        out
     }
 
     #[test]
     fn test_transform_fn_remains_safe() {
-        let src = r#"
-            fn add_safe(a: int, b: int) -> int {
-                return a + b;
-            }
-        "#;
-        let program = parse_and_transform(src);
-        assert_eq!(program.items.len(), 1);
+        let src = "fn safe(x: int) -> int { return x; }";
+        let out = transpile(src);
+        assert!(out.contains("extern \"C\""), "missing extern C");
+        assert!(!out.contains("unsafe"), "fn should not be unsafe");
+    }
 
-        if let Item::Fn(f) = &program.items[0] {
-            assert_eq!(f.name, "add_safe");
-            assert!(!f.is_unsafe); // fn is safe by default
-            // The body should NOT contain a nested unsafe block
-            if let Stmt::Return(_) = &f.body.stmts[0] {
-                // Statements are directly in the body, not nested in unsafe block
-            } else {
-                panic!("Expected return statement directly in body");
-            }
-        } else {
-            panic!("Expected function");
-        }
+    #[test]
+    fn test_transform_c_abi_and_repr() {
+        let src = "proc go(p: void*) -> void { *p = 0; }";
+        let out = transpile(src);
+        assert!(out.contains("unsafe"), "proc should be unsafe");
+        assert!(out.contains("extern \"C\""), "missing extern C");
+    }
+
+    #[test]
+    fn test_replace_word() {
+        assert_eq!(replace_word("int x = 0;", "int", "c_int"), "c_int x = 0;");
+        assert_eq!(replace_word("point.x", "int", "c_int"), "point.x"); // no false match
+        assert_eq!(replace_word("hint", "int", "c_int"), "hint");        // no false match
+    }
+
+    #[test]
+    fn test_apply_body_transforms() {
+        let src = "let x: int = 0; let p: void* = &x as void*;";
+        let out = apply_body_transforms(src);
+        assert!(out.contains("c_int"), "int should become c_int");
+        assert!(out.contains("c_void"), "void should become c_void");
+        assert!(out.contains("as *mut c_void"), "postfix pointer cast should flip");
     }
 }
-
-

@@ -72,7 +72,7 @@ fn main() {
             }
         };
 
-        let tokens = match lexer::Lexer::new(&content).tokenize() {
+        let tokens = match lexer::Lexer::new(&content).tokenize_with_positions() {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("Lexer Error: {}", e);
@@ -80,8 +80,7 @@ fn main() {
             }
         };
 
-        let mut parser = parser::Parser::new(tokens);
-        let mut program = match parser.parse_program() {
+        let mut program = match parser::Parser::new(&content, tokens).parse_program() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("Parser Error: {}", e);
@@ -186,12 +185,11 @@ fn main() {
                         
                         println!("Transpiling: {:?} -> {:?}", path, rs_dest);
                         let content = std::fs::read_to_string(&path).expect("Failed to read carbide file");
-                        let tokens = lexer::Lexer::new(&content).tokenize().unwrap_or_else(|e| {
+                        let tokens = lexer::Lexer::new(&content).tokenize_with_positions().unwrap_or_else(|e| {
                             eprintln!("Lexer Error in {:?}: {}", path, e);
                             std::process::exit(1);
                         });
-                        let mut parser = parser::Parser::new(tokens);
-                        let mut program = parser.parse_program().unwrap_or_else(|e| {
+                        let mut program = parser::Parser::new(&content, tokens).parse_program().unwrap_or_else(|e| {
                             eprintln!("Parser Error in {:?}: {}", path, e);
                             std::process::exit(1);
                         });

@@ -108,7 +108,7 @@ fn test_fixture_libc_types() {
     // Verify function attributes
     assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
     assert!(output.contains("extern \"C\""), "Missing extern \"C\"");
-    assert!(output.contains("unsafe {"), "Missing unsafe block");
+    assert!(output.contains("pub unsafe extern"), "Missing unsafe fn declaration");
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn test_fixture_rust_primitives() {
     assert!(output.contains("#[repr(C)]"), "Missing #[repr(C)]");
     assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
     assert!(output.contains("pub extern \"C\" fn rust_add"), "rust_add signature must be safe fn");
-    assert!(!output.contains("unsafe {"), "Safe fn body must not have unsafe block");
+    assert!(!output.contains("pub unsafe extern \"C\" fn rust_add"), "Safe fn must not be unsafe");
 
     // Verify Rust types are NOT substituted to c_* equivalents
     // (i32 should not become c_int, etc.)
@@ -213,7 +213,7 @@ fn test_fixture_learn_c_examples() {
         output.contains("pub unsafe extern \"C\" fn swapTwoNumbers(a: *mut c_int, b: *mut c_int)"),
         "Missing or incorrect swapTwoNumbers signature"
     );
-    assert!(output.contains("unsafe {"), "Missing unsafe block in proc body");
+    assert!(output.contains("pub unsafe extern \"C\" fn swapTwoNumbers"), "proc must be unsafe fn");
 
     // Verify correct signature and safety translation for get_char_at_offset
     assert!(
