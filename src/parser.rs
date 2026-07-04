@@ -97,11 +97,68 @@ impl Parser {
                 let s = self.parse_struct(attrs)?;
                 Ok(Item::Struct(s))
             }
+            Some(Token::Impl) => {
+                if !attrs.is_empty() {
+                    return Err("Attributes are not allowed on 'impl'".to_string());
+                }
+                self.next_token(); // consume 'impl'
+                let target = match self.next_token() {
+                    Some(Token::Ident(name)) => name,
+                    other => return Err(format!("Expected type name for impl target, found {:?}", other)),
+                };
+                self.expect(Token::OpenBrace)?;
+                let mut methods = Vec::new();
+                while let Some(tok) = self.peek() {
+                    if tok == &Token::CloseBrace {
+                        break;
+                    }
+                    let mut method_attrs = Vec::new();
+                    while let Some(Token::Pound) = self.peek() {
+                        self.next_token();
+                        self.expect(Token::OpenBracket)?;
+                        let mut attr_toks = String::new();
+                        while let Some(tok) = self.peek() {
+                            if tok == &Token::CloseBracket {
+                                break;
+                            }
+                            let t = self.next_token().unwrap();
+                            attr_toks.push_str(&format!("{:?} ", t));
+                        }
+                        self.expect(Token::CloseBracket)?;
+                        method_attrs.push(Attribute { tokens: attr_toks.trim().to_string() });
+                    }
+                    let method = self.parse_fn(method_attrs)?;
+                    methods.push(method);
+                }
+                self.expect(Token::CloseBrace)?;
+                Ok(Item::Impl { target, methods })
+            }
+            Some(Token::Ident(ref name)) if name == "enum" => {
+                if !attrs.is_empty() {
+                    return Err("Attributes on enum not supported yet".to_string());
+                }
+                self.next_token(); // consume "enum"
+                let enum_name = match self.next_token() {
+                    Some(Token::Ident(n)) => n,
+                    other => return Err(format!("Expected enum name, found {:?}", other)),
+                };
+                self.expect(Token::OpenBrace)?;
+                let tokens = self.read_balanced_tokens(|t| t == &Token::CloseBrace)?;
+                self.expect(Token::CloseBrace)?;
+                Ok(Item::Enum { name: enum_name, tokens })
+            }
             Some(Token::Fn) | Some(Token::Proc) | Some(Token::Unsafe) | Some(Token::Extern) => {
                 let f = self.parse_fn(attrs)?;
                 Ok(Item::Fn(f))
             }
-            Some(other) => Err(format!("Unexpected top-level token: {:?}", other)),
+            Some(_) => {
+                let tokens = self.read_balanced_tokens(|t| t == &Token::Semicolon)?;
+                let mut item_tokens = tokens;
+                if let Some(Token::Semicolon) = self.peek() {
+                    item_tokens.push(self.next_token().unwrap());
+                }
+                Ok(Item::Raw { attrs, tokens: item_tokens })
+            }
             None => Err("Unexpected EOF while parsing item".to_string()),
         }
     }
@@ -320,6 +377,20 @@ impl Parser {
                     is_mut,
                 })
             }
+            Some(Token::OpenBracket) => {
+                self.next_token(); // consume '['
+                let base = self.parse_type()?;
+                self.expect(Token::Semicolon)?;
+                let len = match self.next_token() {
+                    Some(Token::IntLit(l)) => l,
+                    other => return Err(format!("Expected array length literal, found {:?}", other)),
+                };
+                self.expect(Token::CloseBracket)?;
+                Ok(Type::Array {
+                    base: Box::new(base),
+                    len,
+                })
+            }
             Some(Token::Ident(name)) => {
                 let n = name.clone();
                 if n == "unsigned" || n == "signed" {
@@ -420,7 +491,51 @@ impl Parser {
         Ok(Block { stmts, is_unsafe })
     }
 
-    /// Parse a single statement.
+    /// Read a balanced token stream up to a stopping token (at brace/paren depth 0)
+    fn read_balanced_tokens<F>(&mut self, stop_fn: F) -> Result<Vec<Token>, String>
+    where
+        F: Fn(&Token) -> bool,
+    {
+        let mut tokens = Vec::new();
+        let mut brace_depth = 0;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+
+        while let Some(tok) = self.peek() {
+            if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 && stop_fn(tok) {
+                break;
+            }
+
+            let t = self.next_token().unwrap();
+            match t {
+                Token::OpenBrace => brace_depth += 1,
+                Token::CloseBrace => {
+                    if brace_depth > 0 {
+                        brace_depth -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                Token::OpenParen => paren_depth += 1,
+                Token::CloseParen => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
+                    }
+                }
+                Token::OpenBracket => bracket_depth += 1,
+                Token::CloseBracket => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    }
+                }
+                _ => {}
+            }
+            tokens.push(t);
+        }
+        Ok(tokens)
+    }
+
+    /// Parse a single statement using balanced token streams.
     fn parse_stmt(&mut self) -> Result<Stmt, String> {
         if let Some(Token::Let) = self.peek() {
             self.next_token(); // consume 'let'
@@ -445,7 +560,8 @@ impl Parser {
             let mut init = None;
             if let Some(Token::Eq) = self.peek() {
                 self.next_token();
-                init = Some(self.parse_expr()?);
+                let init_tokens = self.read_balanced_tokens(|t| t == &Token::Semicolon)?;
+                init = Some(init_tokens);
             }
 
             self.expect(Token::Semicolon)?;
@@ -455,171 +571,48 @@ impl Parser {
                 init,
                 is_mut,
             })
-        } else {
-            let expr = self.parse_expr()?;
-            if let Some(Token::Semicolon) = self.peek() {
-                self.next_token();
-                Ok(Stmt::Semi(expr))
-            } else {
-                Ok(Stmt::Expr(expr))
-            }
-        }
-    }
-
-    /// Parse an expression.
-    pub fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_expr_with_precedence(0)
-    }
-
-    /// Operator precedence map.
-    fn get_op_precedence(op: &str) -> i32 {
-        match op {
-            "=" => 1,
-            "==" | "<" | ">" => 2,
-            "+" | "-" => 3,
-            "*" | "/" => 4,
-            "." => 9,
-            _ => 0,
-        }
-    }
-
-    /// Parse expression using Pratt precedence-climbing.
-    fn parse_expr_with_precedence(&mut self, min_precedence: i32) -> Result<Expr, String> {
-        let mut left = self.parse_primary_expr()?;
-
-        while let Some(tok) = self.peek() {
-            let op = match tok {
-                Token::Eq => "=".to_string(),
-                Token::EqEq => "==".to_string(),
-                Token::Lt => "<".to_string(),
-                Token::Gt => ">".to_string(),
-                Token::Plus => "+".to_string(),
-                Token::Minus => "-".to_string(),
-                Token::Star => "*".to_string(),
-                Token::Slash => "/".to_string(),
-                Token::Dot => ".".to_string(),
-                _ => break,
-            };
-
-            let prec = Self::get_op_precedence(&op);
-            if prec < min_precedence {
-                break;
-            }
-
-            self.next_token(); // consume operator
-
-            // Right-associative assignment vs left-associative operators
-            let next_min_precedence = if op == "=" { prec } else { prec + 1 };
-            let right = self.parse_expr_with_precedence(next_min_precedence)?;
-
-            if op == "=" {
-                left = Expr::Assign {
-                    target: Box::new(left),
-                    value: Box::new(right),
-                };
-            } else {
-                left = Expr::Binary {
-                    left: Box::new(left),
-                    op,
-                    right: Box::new(right),
-                };
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parse basic primary expression.
-    fn parse_primary_expr(&mut self) -> Result<Expr, String> {
-        match self.peek() {
-            Some(Token::IntLit(val)) => {
-                let v = val.clone();
-                self.next_token();
-                Ok(Expr::IntLit(v))
-            }
-            Some(Token::StrLit(val)) => {
-                let v = val.clone();
-                self.next_token();
-                Ok(Expr::StrLit(v))
-            }
-            Some(Token::CharLit(val)) => {
-                let v = *val;
-                self.next_token();
-                Ok(Expr::CharLit(v))
-            }
-            Some(Token::Ident(name)) => {
-                let n = name.clone();
-                self.next_token();
-                if let Some(Token::OpenParen) = self.peek() {
-                    self.next_token(); // consume '('
-                    let mut args = Vec::new();
-                    while let Some(t) = self.peek() {
-                        if t == &Token::CloseParen {
-                            break;
-                        }
-                        args.push(self.parse_expr()?);
-                        if let Some(Token::Comma) = self.peek() {
-                            self.next_token();
-                        }
-                    }
-                    self.expect(Token::CloseParen)?;
-                    Ok(Expr::Call { name: n, args })
+        } else if let Some(Token::If) = self.peek() {
+            self.next_token(); // consume 'if'
+            let cond = self.read_balanced_tokens(|t| t == &Token::OpenBrace)?;
+            let then_branch = self.parse_block()?;
+            let mut else_branch = None;
+            if let Some(Token::Else) = self.peek() {
+                self.next_token(); // consume 'else'
+                if let Some(Token::OpenBrace) | Some(Token::Unsafe) = self.peek() {
+                    else_branch = Some(self.parse_block()?);
+                } else if let Some(Token::If) = self.peek() {
+                    let nested_if = self.parse_stmt()?;
+                    else_branch = Some(Block {
+                        stmts: vec![nested_if],
+                        is_unsafe: false,
+                    });
                 } else {
-                    Ok(Expr::Ident(n))
+                    return Err("Expected block or 'if' after 'else'".to_string());
                 }
             }
-            Some(Token::Star) => {
-                self.next_token(); // consume '*' for dereference
-                let expr = self.parse_expr_with_precedence(8)?;
-                Ok(Expr::Deref(Box::new(expr)))
+            Ok(Stmt::If { cond, then_branch, else_branch })
+        } else if let Some(Token::OpenBrace) | Some(Token::Unsafe) = self.peek() {
+            let block = self.parse_block()?;
+            Ok(Stmt::Block(block))
+        } else if let Some(Token::Return) = self.peek() {
+            self.next_token(); // consume 'return'
+            if let Some(Token::Semicolon) = self.peek() {
+                self.next_token();
+                Ok(Stmt::Return(None))
+            } else {
+                let val_tokens = self.read_balanced_tokens(|t| t == &Token::Semicolon)?;
+                self.expect(Token::Semicolon)?;
+                Ok(Stmt::Return(Some(val_tokens)))
             }
-            Some(Token::Bang) => {
-                self.next_token(); // consume '!'
-                let expr = self.parse_expr_with_precedence(8)?;
-                Ok(Expr::Unary {
-                    op: "!".to_string(),
-                    expr: Box::new(expr),
-                })
+        } else {
+            // Raw statement: read until semicolon or block brace end
+            let raw_tokens = self.read_balanced_tokens(|t| t == &Token::Semicolon || t == &Token::CloseBrace)?;
+            let mut has_semi = false;
+            if let Some(Token::Semicolon) = self.peek() {
+                self.next_token();
+                has_semi = true;
             }
-            Some(Token::Ampersand) => {
-                self.next_token(); // consume '&'
-                let is_mut = if let Some(Token::Mut) = self.peek() {
-                    self.next_token();
-                    true
-                } else {
-                    false
-                };
-                let expr = self.parse_expr_with_precedence(8)?;
-                Ok(Expr::AddrOf {
-                    expr: Box::new(expr),
-                    is_mut,
-                })
-            }
-            Some(Token::OpenParen) => {
-                self.next_token(); // consume '('
-                let expr = self.parse_expr()?;
-                self.expect(Token::CloseParen)?;
-                Ok(expr)
-            }
-            Some(Token::OpenBrace) | Some(Token::Unsafe) => {
-                let block = self.parse_block()?;
-                Ok(Expr::Block(block))
-            }
-            Some(Token::Return) => {
-                self.next_token(); // consume 'return'
-                let val = if let Some(tok) = self.peek() {
-                    if tok == &Token::Semicolon || tok == &Token::CloseBrace || tok == &Token::Comma {
-                        None
-                    } else {
-                        Some(Box::new(self.parse_expr()?))
-                    }
-                } else {
-                    None
-                };
-                Ok(Expr::Return(val))
-            }
-            Some(other) => Err(format!("Unexpected token in expression: {:?}", other)),
-            None => Err("Expected expression, found EOF".to_string()),
+            Ok(Stmt::Raw { tokens: raw_tokens, has_semi })
         }
     }
 }
@@ -687,23 +680,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_expr_precedence() {
-        let tokens = Lexer::new("a = b + c * d").tokenize().unwrap();
+    fn test_parse_raw_statement() {
+        let tokens = Lexer::new("a = b + c * d;").tokenize().unwrap();
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse_expr().unwrap();
+        let stmt = parser.parse_stmt().unwrap();
         assert_eq!(
-            expr,
-            Expr::Assign {
-                target: Box::new(Expr::Ident("a".to_string())),
-                value: Box::new(Expr::Binary {
-                    left: Box::new(Expr::Ident("b".to_string())),
-                    op: "+".to_string(),
-                    right: Box::new(Expr::Binary {
-                        left: Box::new(Expr::Ident("c".to_string())),
-                        op: "*".to_string(),
-                        right: Box::new(Expr::Ident("d".to_string())),
-                    })
-                })
+            stmt,
+            Stmt::Raw {
+                tokens: vec![
+                    Token::Ident("a".to_string()),
+                    Token::Eq,
+                    Token::Ident("b".to_string()),
+                    Token::Plus,
+                    Token::Ident("c".to_string()),
+                    Token::Star,
+                    Token::Ident("d".to_string()),
+                ],
+                has_semi: true,
             }
         );
     }

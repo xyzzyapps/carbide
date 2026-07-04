@@ -19,6 +19,8 @@ pub enum Token {
     Use,
     Impl,
     As,
+    If,
+    Else,
 
     // C Primitive Keywords
     Void,
@@ -151,6 +153,8 @@ impl<'a> Lexer<'a> {
                     "use" => Token::Use,
                     "impl" => Token::Impl,
                     "as" => Token::As,
+                    "if" => Token::If,
+                    "else" => Token::Else,
                     "void" => Token::Void,
                     "int" => Token::Int,
                     "uint" => Token::Uint,

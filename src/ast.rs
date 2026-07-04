@@ -18,6 +18,21 @@ pub enum Item {
     Struct(Struct),
     /// A use import statement (e.g. `use core::ffi::*;`).
     Use(String),
+    /// An enum declaration.
+    Enum {
+        name: String,
+        tokens: Vec<Token>,
+    },
+    /// An impl block.
+    Impl {
+        target: String,
+        methods: Vec<Function>,
+    },
+    /// A generic raw item (e.g. const, static).
+    Raw {
+        attrs: Vec<Attribute>,
+        tokens: Vec<Token>,
+    },
 }
 
 /// An attribute prepended to an item (e.g. `#[repr(C)]`).
@@ -77,6 +92,11 @@ pub enum Type {
         base: Box<Type>,
         is_mut: bool,
     },
+    /// An array type (e.g. `[T; N]`).
+    Array {
+        base: Box<Type>,
+        len: String,
+    },
 }
 
 /// C and Rust primitive types supported in Crust.
@@ -96,6 +116,8 @@ pub struct Block {
     pub is_unsafe: bool,
 }
 
+use crate::lexer::Token;
+
 /// A statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
@@ -103,62 +125,19 @@ pub enum Stmt {
     Local {
         name: String,
         ty: Option<Type>,
-        init: Option<Expr>,
+        init: Option<Vec<Token>>,
         is_mut: bool,
     },
-    /// An expression without a trailing semicolon.
-    Expr(Expr),
-    /// An expression with a trailing semicolon.
-    Semi(Expr),
-}
-
-/// An expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expr {
-    /// An identifier reference.
-    Ident(String),
-    /// An integer literal.
-    IntLit(String),
-    /// A string literal.
-    StrLit(String),
-    /// A character literal.
-    CharLit(char),
-    /// A binary operation (e.g. `a + b`).
-    Binary {
-        left: Box<Expr>,
-        op: String,
-        right: Box<Expr>,
-    },
-    /// A unary operation (e.g. `-a`, `!a`).
-    Unary {
-        op: String,
-        expr: Box<Expr>,
-    },
-    /// A function call: `name(args...)`.
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
-    /// Assignment: `target = value`.
-    Assign {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
-    /// Pointer dereference: `*expr`.
-    Deref(Box<Expr>),
-    /// Address of expression: `&expr` or `&mut expr`.
-    AddrOf {
-        expr: Box<Expr>,
-        is_mut: bool,
-    },
-    /// A sub-block of code.
-    Block(Block),
-    /// An if-else expression.
+    /// An if-else conditional statement.
     If {
-        cond: Box<Expr>,
+        cond: Vec<Token>,
         then_branch: Block,
         else_branch: Option<Block>,
     },
+    /// A nested block of statements.
+    Block(Block),
     /// A return statement.
-    Return(Option<Box<Expr>>),
+    Return(Option<Vec<Token>>),
+    /// A raw sequence of tokens representing any other statement.
+    Raw { tokens: Vec<Token>, has_semi: bool },
 }

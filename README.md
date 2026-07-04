@@ -4,32 +4,32 @@
   <img src="assets/logo_transparent.png" alt="Carbide Logo" width="220" />
 </p>
 
-`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C-style keywords and postfix pointer syntax into standard, FFI-compliant Rust code. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
+`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C-style keywords and postfix pointer syntax into standard, FFI-compliant Rust code. The transpiler applies well-defined syntactic transformations and passes all other Rust code through unchanged, so **any valid `no_std` Rust code works in a `.carbide` file**. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
 
 ## Architecture
 
-The compiler is structured as a classical compiler pipeline:
+The compiler is structured as a transformation pipeline. The parser only deeply parses the structural skeleton (top-level items, function signatures, struct fields). Statement bodies are captured as **raw token streams** and passed through a lightweight token-level transformer. This design means any valid `no_std` Rust inside a function body passes through verbatim after type substitutions:
 
 ```mermaid
 graph TD
-    Source[Source Code .carbide] --> Lexer[Lexer / Tokenizer]
+    Source["Source Code (.carbide)"] --> Lexer[Lexer / Tokenizer]
     Lexer --> Tokens[Token Stream]
-    Tokens --> Parser[Pratt Parser]
-    Parser --> AST[Raw AST]
-    AST --> Transform[AST Transformation Pipeline]
-    
+    Tokens --> Parser["Token-Stream Parser (structural skeleton only)"]
+    Parser --> AST["AST (items + raw token bodies)"]
+    AST --> Transform[Transformation Pipeline]
+
     subgraph Transformation Passes
-        Transform --> Pass1[Type Substitution]
-        Pass1 --> Pass2[Pointer Flipping]
-        Pass2 --> Pass3[C-ABI Function signature]
-        Pass3 --> Pass4[Implicit Unsafe body]
-        Pass5[Auto-Repr Struct]
+        Transform --> Pass1[Type Substitution int/void/char -> c_int/c_void/c_char]
+        Pass1 --> Pass2[Postfix Pointer Flip T* -> *mut T]
+        Pass2 --> Pass3[C-ABI fn signature + no_mangle]
+        Pass3 --> Pass4["proc -> unsafe fn + implicit unsafe{} body"]
+        Pass4 --> Pass5[Auto #repr(C) on structs]
     end
-    
+
     Pass5 --> TransAST[Transformed AST]
     TransAST --> Emitter[Code Generator / Emitter]
-    Emitter --> Output[Rust Code .rs]
-    
+    Emitter --> Output["Rust Code (.rs)"]
+
     Output --> Driver[rustc / Cargo Compilation]
 ```
 
@@ -56,7 +56,8 @@ The transpiler automatically maps C-style primitive type keywords:
 - `float` $\rightarrow$ `core::ffi::c_float`
 - `double` $\rightarrow$ `core::ffi::c_double`
 - `long double` $\rightarrow$ `core::ffi::c_double`
-- Standard Rust types (e.g. `i32`, `u8`, `f32`, `bool`) are supported 100% and bypassed by the transpiler.
+- Standard Rust types (e.g. `i32`, `u8`, `f32`, `bool`, `usize`) pass through unmodified.
+- Any valid `no_std` Rust control flow (`while`, `loop`, `match`, `if`/`else`, `break`, `continue`, closures, etc.) is captured as a raw token stream and emitted verbatim after type substitutions. The Rust compiler handles all semantic checking.
 
 ### 2. libc Integration
 Standard `libc` types are supported:
@@ -89,13 +90,13 @@ Carbide supports C-style postfix pointer syntax:
 ## Workspace Layout
 
 - `src/main.rs`: Command Line Interface parser and Cargo subcommand router.
-- `src/lexer.rs`: Token definitions and tokenizer logic. Handles C primitive keywords and postfix `*` symbols.
-- `src/ast.rs`: Intermediate representation nodes for items, functions, structs, statements, and expressions.
-- `src/parser.rs`: Hand-written recursive descent Pratt parser. Solves operator precedence for field access (`.`) and dereferences (`*`).
-- `src/transform.rs`: Runs structural mutation passes over the AST.
-- `src/emitter.rs`: Formats the transformed AST back into compliant Rust code. Includes a precedence-aware expression formatter.
-- `tests/integration_tests.rs`: Multi-stage pipeline verification test.
-- `tests/fixture_tests.rs`: Fixture-based runner that compiles all `.carbide` files under `tests/fixtures/`.
+- `src/lexer.rs`: Token definitions and tokenizer logic. Handles C primitive keywords, postfix `*` symbols, and all standard Rust tokens needed for pass-through.
+- `src/ast.rs`: Intermediate representation nodes. Function and struct signatures are fully parsed; statement bodies are stored as `Vec<Token>` raw token streams.
+- `src/parser.rs`: Hand-written recursive descent parser. Deeply parses structural items (functions, structs, enums, impls). Statement bodies are captured with balanced-brace tracking and stored as flat token streams.
+- `src/transform.rs`: Runs structural mutation passes over the AST. Applies type substitutions and postfix-to-prefix pointer rewrites on token streams.
+- `src/emitter.rs`: Formats the transformed AST back into compliant Rust code. Includes spacing-aware raw token emitter that handles `as *mut T` spacing and `}` newlines correctly.
+- `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile).
+- `tests/fixture_tests.rs`: Fixture-based runner that transpiles all `.carbide` files under `tests/fixtures/` and verifies output.
 
 ---
 

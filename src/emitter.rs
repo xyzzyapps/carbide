@@ -1,6 +1,7 @@
 //! Pretty-printer/emitter that converts the Crust AST back into standard Rust code.
 
 use crate::ast::*;
+use crate::lexer::Token;
 
 /// Formatter for emitting AST structures as formatted Rust source code.
 pub struct Emitter {
@@ -62,6 +63,11 @@ impl Emitter {
                     self.output.push('&');
                 }
                 self.emit_type(base);
+            }
+            Type::Array { base, len } => {
+                self.output.push('[');
+                self.emit_type(base);
+                self.output.push_str(&format!("; {}]", len));
             }
         }
     }
@@ -138,6 +144,34 @@ impl Emitter {
                 self.emit_block(&func.body);
                 self.newline();
             }
+            Item::Enum { name, tokens } => {
+                self.indent();
+                self.output.push_str(&format!("enum {} {{\n", name));
+                self.indent_level += 1;
+                self.indent();
+                self.emit_tokens(tokens);
+                self.newline();
+                self.indent_level -= 1;
+                self.indent();
+                self.output.push_str("}\n");
+            }
+            Item::Impl { target, methods } => {
+                self.indent();
+                self.output.push_str(&format!("impl {} {{\n", target));
+                self.indent_level += 1;
+                for method in methods {
+                    self.emit_item(&Item::Fn(method.clone()));
+                }
+                self.indent_level -= 1;
+                self.indent();
+                self.output.push_str("}\n");
+            }
+            Item::Raw { attrs, tokens } => {
+                self.emit_attributes(attrs);
+                self.indent();
+                self.emit_tokens(tokens);
+                self.newline();
+            }
         }
     }
 
@@ -171,130 +205,153 @@ impl Emitter {
                     self.output.push_str(": ");
                     self.emit_type(t);
                 }
-                if let Some(ref expr) = init {
+                if let Some(ref tokens) = init {
                     self.output.push_str(" = ");
-                    self.emit_expr(expr);
+                    self.emit_tokens(tokens);
                 }
                 self.output.push_str(";\n");
             }
-            Stmt::Expr(expr) => {
-                self.emit_expr(expr);
-                self.newline();
-            }
-            Stmt::Semi(expr) => {
-                self.emit_expr(expr);
-                self.output.push_str(";\n");
-            }
-        }
-    }
-
-    /// Get the operator precedence of an expression.
-    fn get_precedence(expr: &Expr) -> i32 {
-        match expr {
-            Expr::Ident(_) | Expr::IntLit(_) | Expr::StrLit(_) | Expr::CharLit(_) | Expr::Call { .. } | Expr::Block(_) | Expr::If { .. } => 10,
-            Expr::Binary { op, .. } if op == "." => 9,
-            Expr::Deref(_) | Expr::AddrOf { .. } | Expr::Unary { .. } => 8,
-            Expr::Binary { op, .. } if op == "*" || op == "/" => 7,
-            Expr::Binary { op, .. } if op == "+" || op == "-" => 6,
-            Expr::Binary { op, .. } if op == "==" || op == "<" || op == ">" => 5,
-            Expr::Binary { .. } => 5, // fallback for any other binary operator
-            Expr::Assign { .. } => 4,
-            Expr::Return(_) => 3,
-        }
-    }
-
-    /// Emit expression, wrapping in parentheses if its precedence is less than parent precedence.
-    fn emit_expr_with_precedence(&mut self, expr: &Expr, parent_prec: i32) {
-        let prec = Self::get_precedence(expr);
-        if prec < parent_prec {
-            self.output.push('(');
-            self.emit_expr_node(expr);
-            self.output.push(')');
-        } else {
-            self.emit_expr_node(expr);
-        }
-    }
-
-    /// Emit expression.
-    fn emit_expr(&mut self, expr: &Expr) {
-        self.emit_expr_with_precedence(expr, 0);
-    }
-
-    /// Emit the core of an expression node.
-    fn emit_expr_node(&mut self, expr: &Expr) {
-        match expr {
-            Expr::Ident(name) => self.output.push_str(name),
-            Expr::IntLit(val) => self.output.push_str(val),
-            Expr::StrLit(val) => self.output.push_str(&format!("\"{}\"", val)),
-            Expr::CharLit(val) => self.output.push_str(&format!("'{}'", val)),
-            Expr::Binary { left, op, right } => {
-                let prec = Self::get_precedence(expr);
-                if op == "." {
-                    self.emit_expr_with_precedence(left, prec);
-                    self.output.push('.');
-                    self.emit_expr_with_precedence(right, prec);
-                } else {
-                    self.emit_expr_with_precedence(left, prec);
-                    self.output.push_str(&format!(" {} ", op));
-                    self.emit_expr_with_precedence(right, prec + 1);
-                }
-            }
-            Expr::Unary { op, expr } => {
-                let prec = Self::get_precedence(expr);
-                self.output.push_str(op);
-                self.emit_expr_with_precedence(expr, prec);
-            }
-            Expr::Call { name, args } => {
-                self.output.push_str(name);
-                self.output.push('(');
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.emit_expr(arg);
-                }
-                self.output.push(')');
-            }
-            Expr::Assign { target, value } => {
-                let prec = Self::get_precedence(expr);
-                self.emit_expr_with_precedence(target, prec);
-                self.output.push_str(" = ");
-                self.emit_expr_with_precedence(value, prec);
-            }
-            Expr::Deref(expr) => {
-                let prec = Self::get_precedence(expr);
-                self.output.push_str("*");
-                self.emit_expr_with_precedence(expr, prec);
-            }
-            Expr::AddrOf { expr, is_mut } => {
-                let prec = Self::get_precedence(expr);
-                if *is_mut {
-                    self.output.push_str("&mut ");
-                } else {
-                    self.output.push_str("&");
-                }
-                self.emit_expr_with_precedence(expr, prec);
-            }
-            Expr::Block(block) => {
-                self.emit_block(block);
-            }
-            Expr::If { cond, then_branch, else_branch } => {
+            Stmt::If { cond, then_branch, else_branch } => {
                 self.output.push_str("if ");
-                self.emit_expr(cond);
+                self.emit_tokens(cond);
                 self.output.push(' ');
                 self.emit_block(then_branch);
                 if let Some(ref eb) = else_branch {
                     self.output.push_str(" else ");
                     self.emit_block(eb);
                 }
+                self.newline();
             }
-            Expr::Return(val) => {
+            Stmt::Block(block) => {
+                self.emit_block(block);
+                self.newline();
+            }
+            Stmt::Return(val) => {
                 self.output.push_str("return");
-                if let Some(ref v) = val {
+                if let Some(ref tokens) = val {
                     self.output.push(' ');
-                    self.emit_expr(v);
+                    self.emit_tokens(tokens);
                 }
+                self.output.push_str(";\n");
             }
+            Stmt::Raw { tokens, has_semi } => {
+                self.emit_tokens(tokens);
+                if *has_semi {
+                    self.output.push(';');
+                }
+                self.newline();
+            }
+        }
+    }
+
+    /// Emit a slice of raw tokens with correct spacing.
+    ///
+    /// Rules:
+    /// - Two adjacent identifier-like tokens get a space between them.
+    /// - `as` always gets a trailing space (e.g. `as *mut T`).
+    /// - `,` always gets a trailing space.
+    /// - `}` gets a trailing newline+indent so the next statement starts fresh.
+    fn emit_tokens(&mut self, tokens: &[Token]) {
+        let mut prev_needs_space = false;
+        let mut prev_was_as = false;
+        let len = tokens.len();
+        for (i, tok) in tokens.iter().enumerate() {
+            let has_next = i + 1 < len;
+            let s = match tok {
+                Token::Fn => "fn".to_string(),
+                Token::Proc => "proc".to_string(),
+                Token::Struct => "struct".to_string(),
+                Token::Let => "let".to_string(),
+                Token::Mut => "mut".to_string(),
+                Token::Const => "const".to_string(),
+                Token::Return => "return".to_string(),
+                Token::Extern => "extern".to_string(),
+                Token::Unsafe => "unsafe".to_string(),
+                Token::Use => "use".to_string(),
+                Token::Impl => "impl".to_string(),
+                Token::As => "as".to_string(),
+                Token::If => "if".to_string(),
+                Token::Else => "else".to_string(),
+                Token::Void => "void".to_string(),
+                Token::Int => "int".to_string(),
+                Token::Uint => "uint".to_string(),
+                Token::Long => "long".to_string(),
+                Token::Char => "char".to_string(),
+                Token::Ident(name) => name.clone(),
+                Token::IntLit(val) => val.clone(),
+                Token::StrLit(val) => format!("\"{}\"", val),
+                Token::CharLit(val) => format!("'{}'", val),
+                Token::Star => "*".to_string(),
+                Token::Ampersand => "&".to_string(),
+                Token::Arrow => "->".to_string(),
+                Token::Colon => ":".to_string(),
+                Token::DoubleColon => "::".to_string(),
+                Token::Semicolon => ";".to_string(),
+                Token::Comma => ",".to_string(),
+                Token::Eq => "=".to_string(),
+                Token::EqEq => "==".to_string(),
+                Token::Lt => "<".to_string(),
+                Token::Gt => ">".to_string(),
+                Token::Plus => "+".to_string(),
+                Token::Minus => "-".to_string(),
+                Token::Slash => "/".to_string(),
+                Token::Pound => "#".to_string(),
+                Token::OpenParen => "(".to_string(),
+                Token::CloseParen => ")".to_string(),
+                Token::OpenBrace => "{".to_string(),
+                Token::CloseBrace => "}".to_string(),
+                Token::OpenBracket => "[".to_string(),
+                Token::CloseBracket => "]".to_string(),
+                Token::Dot => ".".to_string(),
+                Token::Bang => "!".to_string(),
+            };
+
+            let cur_needs_space = matches!(
+                tok,
+                Token::Fn
+                    | Token::Proc
+                    | Token::Struct
+                    | Token::Let
+                    | Token::Mut
+                    | Token::Const
+                    | Token::Return
+                    | Token::Extern
+                    | Token::Unsafe
+                    | Token::Use
+                    | Token::Impl
+                    | Token::As
+                    | Token::If
+                    | Token::Else
+                    | Token::Void
+                    | Token::Int
+                    | Token::Uint
+                    | Token::Long
+                    | Token::Char
+                    | Token::Ident(_)
+                    | Token::IntLit(_)
+            );
+
+            // Space between two identifier-like tokens, or after `as` keyword.
+            if (prev_needs_space && cur_needs_space) || prev_was_as {
+                self.output.push(' ');
+            }
+
+            self.output.push_str(&s);
+
+            // Trailing space after comma.
+            if tok == &Token::Comma {
+                self.output.push(' ');
+            }
+
+            // Newline + re-indent after `}` only when more tokens follow,
+            // so that `return Struct { .. };` keeps `;` on the same line.
+            if tok == &Token::CloseBrace && has_next {
+                self.output.push('\n');
+                self.indent();
+            }
+
+            prev_was_as = tok == &Token::As;
+            prev_needs_space = cur_needs_space;
         }
     }
 }

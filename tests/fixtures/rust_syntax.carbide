@@ -1,0 +1,62 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+impl Point {
+    fn new(x: int, y: int) -> Point {
+        return Point { x, y };
+    }
+
+    proc shift(self: Point*, dx: int, dy: int) -> void {
+        (*self).x = (*self).x + dx;
+        (*self).y = (*self).y + dy;
+    }
+}
+
+proc test_rust_syntax() -> int {
+    let mut sum: int = 0;
+    
+    // While loop
+    let mut i: int = 0;
+    while i < 10 {
+        sum = sum + i;
+        i = i + 1;
+    }
+
+    // Loop
+    let mut j: int = 0;
+    loop {
+        if j >= 5 {
+            break;
+        }
+        sum = sum + j;
+        j = j + 1;
+    }
+
+    // Match statement
+    let color: Color = Color::Green;
+    let color_val: int = match color {
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Blue => 3,
+    };
+    sum = sum + color_val;
+
+    // Indexing and arrays
+    let mut arr: [int; 3] = [10, 20, 30];
+    sum = sum + arr[1];
+
+    // Type casting
+    let raw_ptr: void* = &mut sum as void*;
+    let int_ptr: int* = raw_ptr as int*;
+    *int_ptr = *int_ptr + 5;
+
+    return sum;
+}
