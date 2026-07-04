@@ -475,7 +475,7 @@ impl Parser {
     fn get_op_precedence(op: &str) -> i32 {
         match op {
             "=" => 1,
-            "==" => 2,
+            "==" | "<" | ">" => 2,
             "+" | "-" => 3,
             "*" | "/" => 4,
             "." => 9,
@@ -491,6 +491,8 @@ impl Parser {
             let op = match tok {
                 Token::Eq => "=".to_string(),
                 Token::EqEq => "==".to_string(),
+                Token::Lt => "<".to_string(),
+                Token::Gt => ">".to_string(),
                 Token::Plus => "+".to_string(),
                 Token::Minus => "-".to_string(),
                 Token::Star => "*".to_string(),

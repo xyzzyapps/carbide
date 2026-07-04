@@ -196,7 +196,7 @@ impl Emitter {
             Expr::Deref(_) | Expr::AddrOf { .. } | Expr::Unary { .. } => 8,
             Expr::Binary { op, .. } if op == "*" || op == "/" => 7,
             Expr::Binary { op, .. } if op == "+" || op == "-" => 6,
-            Expr::Binary { op, .. } if op == "==" => 5,
+            Expr::Binary { op, .. } if op == "==" || op == "<" || op == ">" => 5,
             Expr::Binary { .. } => 5, // fallback for any other binary operator
             Expr::Assign { .. } => 4,
             Expr::Return(_) => 3,

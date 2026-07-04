@@ -1,134 +1,155 @@
 # Learn Carbide in Y Minutes
 
-Carbide is a low-level dialect of Rust tailored for C ABI compatibility, systems programming, and bare-metal FFI. It merges C-style types and pointer syntax with Rust's structure and safety, compiling directly to `#![no_std]` Rust code.
+Ah, Carbide. The language of modern high-performance FFI and C-style Rust systems programming.
+
+Carbide is a low-level dialect of Rust designed to merge C-style types and pointer semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C pointer notation combined with the structure and compiler benefits of Rust, prefixing files with `#![no_std]` and managing memory layouts automatically.
+
+Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
 
 ```rust
-// A single-line comment.
-/* A multi-line block comment. */
+// Single-line comments start with //
 
-////////////////////////////////////////////////////////////////////////////////
-// 1. Primitive C Types & Rust Primitives
-////////////////////////////////////////////////////////////////////////////////
+/*
+Multi-line comments look like this.
+*/
 
-struct TypeShowcase {
-    // Carbide maps C-style primitive type keywords to core::ffi equivalents:
-    c_integer: int,                  // c_int (usually 32-bit signed)
-    c_unsigned: unsigned int,        // c_uint (usually 32-bit unsigned)
-    c_unsigned_short: unsigned short,// c_ushort
-    c_signed_char: signed char,      // c_schar
-    c_character: char,               // c_char
+// Declarations of functions or procedures can be placed at the top of
+// your file or in advance.
+fn add_two_ints(x1: int, x2: int) -> int; // Function prototype
+
+// Your entry point can be a function called "main".
+// Carbide will output it as a public extern "C" function with #[no_mangle].
+fn main() -> int {
+    // print output using printf-like external declarations or bindings
     
-    // Multi-word integers:
-    c_long_val: long,                // c_long
-    c_ulong_val: unsigned long,      // c_ulong
-    c_long_long: long long,          // c_longlong
-    c_ulong_long: unsigned long long,// c_ulonglong
-    
-    // Floating point types:
-    c_float_val: float,              // c_float
-    c_double_val: double,            // c_double
-    c_long_double: long double,      // c_double
-    
-    // Void type is written as void (typically used in pointer targets void* or return void)
-    
-    // 100% of standard Rust types bypass the mapping and remain untouched:
-    rust_i32: i32,
-    rust_u8: u8,
-    rust_f64: f64,
-    rust_bool: bool,
-    rust_usize: usize
-}
+    ///////////////////////////////////////
+    // Types
+    ///////////////////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////
-// 2. Postfix Pointer Syntax
-////////////////////////////////////////////////////////////////////////////////
+    // ints are mapped to core::ffi::c_int (usually 4 bytes)
+    let mut x_int: int = 0;
 
-struct PointerShowcase {
-    // Carbide supports C-style postfix raw pointer syntax:
-    mutable_ptr: int*,               // *mut c_int
-    constant_ptr: int const*,        // *const c_int
-    double_ptr: void**,              // *mut *mut c_void
-    struct_ptr: TypeShowcase*        // *mut TypeShowcase
-}
+    // shorts are mapped to core::ffi::c_short (usually 2 bytes)
+    let mut x_short: short = 0;
 
-////////////////////////////////////////////////////////////////////////////////
-// 3. Functions (fn) vs. Procedures (proc)
-////////////////////////////////////////////////////////////////////////////////
+    // chars are mapped to core::ffi::c_char (usually 1 byte)
+    let mut x_char: char = 0;
+    let mut y_char: char = 'y'; // Char literals are quoted with ''
 
-// Carbide distinguishes safe functions from unsafe FFI procedures:
+    // longs are mapped to c_long (usually 4 to 8 bytes);
+    // long longs are mapped to c_longlong (guaranteed to be at least 8 bytes)
+    let mut x_long: long = 0;
+    let mut x_long_long: long long = 0;
 
-// A. safe fn: Safe by default
-// - Emits standard `pub extern "C" fn` in Rust.
-// - Body is safe (no implicit unsafe block).
-fn add_safe(a: i32, b: i32) -> i32 {
-    return a + b;
-}
+    // floats are mapped to core::ffi::c_float (usually 32-bit floating point)
+    let mut x_float: float = 0.0;
 
-// B. unsafe proc: Unsafe by default
-// - Emits `pub unsafe extern "C" fn` in Rust.
-// - Body is implicitly wrapped in `unsafe {}`, permitting pointer arithmetic/dereferences.
-proc compute_length(str_ptr: char const*) -> size_t {
-    let mut len: size_t = 0;
-    // Pointers can be dereferenced and navigated directly
-    while *str_ptr != 0 {
-        len = len + 1;
-        str_ptr = str_ptr + 1; // Pointer arithmetic is allowed!
+    // doubles are mapped to core::ffi::c_double (64-bit floating-point)
+    let mut x_double: double = 0.0;
+
+    // integer types may be unsigned (greater than or equal to zero)
+    let mut ux_short: unsigned short = 0;
+    let mut ux_int: unsigned int = 0;
+    let mut ux_long_long: unsigned long long = 0;
+
+    // size_t is an unsigned integer type used to represent sizes
+    // (If size_t or other libc types are used, use libc::*; is automatically imported)
+    let mut size: size_t = 0;
+
+    // String literals are represented using standard Rust double quotes.
+    // In Carbide, they are raw strings:
+    let mut a_string: char const* = "This is a string";
+
+    ///////////////////////////////////////
+    // Operators
+    ///////////////////////////////////////
+
+    // Arithmetic is straightforward
+    let mut sum: int = 1 + 2;   // => 3
+    let mut diff: int = 2 - 1;  // => 1
+    let mut prod: int = 2 * 1;  // => 2
+    let mut quot: int = 1 / 2;  // => 0 (truncated towards 0)
+
+    // Comparisons return standard boolean flags in Rust:
+    let mut is_equal: bool = 3 == 2; // => false
+    let mut is_greater: bool = 3 > 2; // => true
+
+    // Logic works on bool flags:
+    let mut result: bool = !true; // => false
+    let mut logical_and: bool = true && false; // => false
+
+    ///////////////////////////////////////
+    // Control Structures
+    ///////////////////////////////////////
+
+    // If/Else statements:
+    if x_int == 0 {
+        x_int = 10;
+    } else {
+        x_int = 20;
     }
-    return len;
+
+    // NOTE: Carbide does not define loops (like while, for, do-while) in its AST.
+    // Instead, repetitive FFI tasks are written recursively or offloaded to Rust bindings.
+
+    ///////////////////////////////////////
+    // Pointers
+    ///////////////////////////////////////
+
+    // A pointer is declared with a postfix star `*`:
+    let mut x: int = 0;
+    let mut px: int* = &mut x; // Retrieve address of x
+
+    // Dereferencing a pointer uses the prefix `*` operator:
+    let mut val: int = *px; // => 0 (the value of x)
+
+    // You can also change the value the pointer is pointing to:
+    *px = 5; // x is now 5
+
+    // Pointer Arithmetic:
+    // Raw pointer offsets in Carbide use the standard Rust .offset() method,
+    // which compiles cleanly within implicit unsafe blocks:
+    let mut px_offset: int* = px.offset(1);
+
+    return 0;
 }
 
-// C. Explicit unsafe fn: Works like proc (unsafe by default)
-unsafe fn read_offset(ptr: int*, offset: usize) -> int {
-    return *(ptr + offset);
+///////////////////////////////////////
+// Functions (fn) & Procedures (proc)
+///////////////////////////////////////
+
+// Carbide has two keyword types for FFI code generation:
+
+// 1. safe fn: Safe by default
+// - Transpiles to safe Rust `pub extern "C" fn`.
+// - Body is parsed in safe Rust scope (no implicit unsafe block wrapper).
+fn add_two_ints(x1: int, x2: int) -> int {
+    return x1 + x2;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// 4. Struct Representation & memory layout
-////////////////////////////////////////////////////////////////////////////////
+// 2. unsafe proc: Unsafe by default
+// - Transpiles to `pub unsafe extern "C" fn`.
+// - Body is automatically wrapped in an implicit `unsafe {}` block,
+//   allowing pointer dereferences and offsets without manual wrapping.
+proc swapTwoNumbers(a: int*, b: int*) -> void {
+    let temp: int = *a;
+    *a = *b;
+    *b = temp;
+}
 
-// All struct definitions are automatically injected with #[repr(C)]
-// ensuring stable memory layout compatible with C:
+// 3. Explicit unsafe fn: Works like proc (unsafe by default)
+unsafe fn read_value(ptr: int*) -> int {
+    return *ptr;
+}
+
+///////////////////////////////////////
+// Structs & memory layout
+///////////////////////////////////////
+
+// Every struct definition is automatically prepended with #[repr(C)],
+// guaranteeing C-compatible memory layout:
 struct Point {
     x: float,
     y: float
 }
-
-proc scale_point(p: Point*, factor: float) -> void {
-    (*p).x = (*p).x * factor;
-    (*p).y = (*p).y * factor;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// 5. libc Integration & no_std
-////////////////////////////////////////////////////////////////////////////////
-
-// - Every Carbide file is automatically injected with `#![no_std]`.
-// - If libc-specific types (like size_t, pid_t, off_t, ssize_t) are used,
-//   the transpiler automatically appends `use libc::*;` at the top of the file.
-proc get_process_id() -> pid_t {
-    // Transpiles to an FFI call that returns libc::pid_t
-    return 0;
-}
 ```
-
-## Compilation and Tooling
-
-Carbide transpiled files compile directly as standard Rust libraries or modules.
-
-### 1. Direct Compilation via `carbide`
-Transpile a `.carbide` file to standard `.rs` code:
-```powershell
-# Transpiles file.carbide -> file.rs
-carbide file.carbide
-
-# Transpiles and compiles directly with rustc into a static library
-carbide file.carbide -c
-```
-
-### 2. Building Projects via `cargo carbide`
-Build a Cargo package containing Carbide files under `src/`:
-```powershell
-# Compiles all Carbide code in your crate
-cargo carbide build
-```
-This automatically manages a temporary FFI target in `target/carbide_workspace` and outputs compilation libraries (`.lib`, `.a`, `.dll`, `.so`) directly to your project's main target output folder.

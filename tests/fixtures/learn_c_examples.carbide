@@ -1,0 +1,39 @@
+// learn_c_examples.carbide
+// Translates the C examples from Learn C in Y Minutes to Carbide dialect.
+
+struct MyStruct {
+    a: int,
+    b: int
+}
+
+fn add_two_ints(x1: int, x2: int) -> int {
+    return x1 + x2;
+}
+
+proc swapTwoNumbers(a: int*, b: int*) -> void {
+    let temp: int = *a;
+    *a = *b;
+    *b = temp;
+}
+
+proc get_char_at_offset(str_in: char*, offset: int) -> char {
+    return *str_in.offset(offset);
+}
+
+fn basic_math(a: int, b: int) -> int {
+    let sum: int = a + b;
+    let diff: int = a - b;
+    let prod: int = a * b;
+    let quot: int = a / b;
+    return sum + diff + prod + quot;
+}
+
+proc check_control_flow(val: int) -> int {
+    let mut x: int = 0;
+    if val > 10 {
+        x = 100;
+    } else {
+        x = 50;
+    }
+    return x;
+}

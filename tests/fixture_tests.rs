@@ -202,6 +202,43 @@ fn test_fixture_rust_primitives() {
 }
 
 #[test]
+fn test_fixture_learn_c_examples() {
+    let fixture = Path::new("tests/fixtures/learn_c_examples.carbide");
+    assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
+
+    let output = transpile_fixture(fixture);
+
+    // Verify correct signature and safety translation for swapTwoNumbers
+    assert!(
+        output.contains("pub unsafe extern \"C\" fn swapTwoNumbers(a: *mut c_int, b: *mut c_int)"),
+        "Missing or incorrect swapTwoNumbers signature"
+    );
+    assert!(output.contains("unsafe {"), "Missing unsafe block in proc body");
+
+    // Verify correct signature and safety translation for get_char_at_offset
+    assert!(
+        output.contains("pub unsafe extern \"C\" fn get_char_at_offset(str_in: *mut c_char, offset: c_int) -> c_char"),
+        "Missing or incorrect get_char_at_offset signature"
+    );
+
+    // Verify correct signature for add_two_ints (safe fn)
+    assert!(
+        output.contains("pub extern \"C\" fn add_two_ints(x1: c_int, x2: c_int) -> c_int"),
+        "Missing or incorrect add_two_ints signature"
+    );
+
+    // Verify basic_math exists and returns c_int
+    assert!(
+        output.contains("pub extern \"C\" fn basic_math(a: c_int, b: c_int) -> c_int"),
+        "Missing or incorrect basic_math signature"
+    );
+
+    // Verify struct has repr(C)
+    assert!(output.contains("#[repr(C)]"), "Missing #[repr(C)]");
+    assert!(output.contains("pub struct MyStruct"), "Missing MyStruct struct");
+}
+
+#[test]
 fn test_all_fixtures_transpile() {
     let fixtures_dir = Path::new("tests/fixtures");
     let fixtures = discover_fixtures(fixtures_dir);

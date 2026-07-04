@@ -55,6 +55,8 @@ pub enum Token {
     CloseBracket,       // `]`
     Dot,                // `.`
     Bang,               // `!`
+    Lt,                 // `<`
+    Gt,                 // `>`
 }
 
 /// A Lexer that processes the source string.
@@ -263,6 +265,8 @@ impl<'a> Lexer<'a> {
                 ']' => tokens.push(Token::CloseBracket),
                 '.' => tokens.push(Token::Dot),
                 '!' => tokens.push(Token::Bang),
+                '<' => tokens.push(Token::Lt),
+                '>' => tokens.push(Token::Gt),
                 other => return Err(format!("Unexpected character: '{}'", other)),
             }
         }
