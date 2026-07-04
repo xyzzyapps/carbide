@@ -77,8 +77,11 @@ Carbide supports C-style postfix pointer syntax:
 ### 4. Automatic FFI Attributes & Crate Directives
 - **no_std**: The `#![no_std]` crate attribute is automatically prepended to every generated file, ensuring low-level and bare-metal compilation compatibility.
 - **Conditional libc**: `use libc::*;` is conditionally imported only if libc-specific types (e.g., `size_t`, `pid_t`) are referenced in the source AST, keeping simple transpiled files free from external dependencies.
-- **C-ABI**: Every top-level function is automatically injected with the `extern "C"` ABI calling convention and the `#[no_mangle]` attribute.
-- **Implicit Unsafe**: The statements inside every function body block are automatically wrapped in a nested `unsafe {}` block, allowing transparent pointer dereferencing and arithmetic.
+- **C-ABI**: Every top-level function or procedure is automatically injected with the `extern "C"` ABI calling convention and the `#[no_mangle]` attribute.
+- **Function/Procedure Safety (`fn` vs `proc`)**:
+  - `fn` declarations: Safe by default (emits standard `fn` in Rust, does **not** implicitly wrap body statements in unsafe).
+  - `proc` declarations: Unsafe by default (emits `unsafe fn` in Rust, and automatically wraps all body statements in an implicit `unsafe {}` block, permitting low-level pointer dereferencing and arithmetic).
+  - Explicit `unsafe fn` declarations are also supported and behave like `proc` (unsafe with implicit body wrapping).
 - **Auto-Repr**: Every struct definition in the AST is automatically prepended with the `#[repr(C)]` attribute to ensure stable C memory layout.
 
 ---
