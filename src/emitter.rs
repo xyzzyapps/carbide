@@ -324,7 +324,7 @@ mod tests {
                 y: int*
             }
 
-            fn add(p: Point const*) -> int {
+            proc add(p: Point const*) -> int {
                 return *p.x;
             }
         "#;
@@ -340,7 +340,7 @@ mod tests {
         assert!(output.contains("pub y: *mut c_int"));
         
         assert!(output.contains("#[no_mangle]"));
-        assert!(output.contains("pub extern \"C\" fn add(p: *const Point) -> c_int"));
+        assert!(output.contains("pub unsafe extern \"C\" fn add(p: *const Point) -> c_int"));
         assert!(output.contains("unsafe {"));
     }
 }

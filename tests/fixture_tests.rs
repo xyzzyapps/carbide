@@ -191,7 +191,8 @@ fn test_fixture_rust_primitives() {
     // Verify struct and function attributes
     assert!(output.contains("#[repr(C)]"), "Missing #[repr(C)]");
     assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
-    assert!(output.contains("extern \"C\""), "Missing extern \"C\"");
+    assert!(output.contains("pub extern \"C\" fn rust_add"), "rust_add signature must be safe fn");
+    assert!(!output.contains("unsafe {"), "Safe fn body must not have unsafe block");
 
     // Verify Rust types are NOT substituted to c_* equivalents
     // (i32 should not become c_int, etc.)

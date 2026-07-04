@@ -162,13 +162,15 @@ pub fn transform_fn(func: &mut Function) {
     // 3. Type substitution within function body statements
     transform_block(&mut func.body);
 
-    // 4. Implicit Unsafe Pass: Wrap body in unsafe block
-    let original_stmts = std::mem::take(&mut func.body.stmts);
-    let unsafe_block = Block {
-        stmts: original_stmts,
-        is_unsafe: true,
-    };
-    func.body.stmts = vec![Stmt::Expr(Expr::Block(unsafe_block))];
+    // 4. Implicit Unsafe Pass: Wrap body in unsafe block only if the function is unsafe
+    if func.is_unsafe {
+        let original_stmts = std::mem::take(&mut func.body.stmts);
+        let unsafe_block = Block {
+            stmts: original_stmts,
+            is_unsafe: true,
+        };
+        func.body.stmts = vec![Stmt::Expr(Expr::Block(unsafe_block))];
+    }
 }
 
 /// Applies all transformation passes to a Struct.
@@ -217,7 +219,7 @@ mod tests {
     fn test_transform_c_abi_and_repr() {
         let src = r#"
             struct Point { x: int, y: int* }
-            fn add(a: int, b: int) -> int {
+            proc add(a: int, b: int) -> int {
                 return a + b;
             }
         "#;
@@ -233,11 +235,12 @@ mod tests {
             panic!("Expected struct");
         }
 
-        // Verify fn has no_mangle, extern "C", and int -> c_int
+        // Verify proc has no_mangle, extern "C", and int -> c_int
         if let Item::Fn(f) = &program.items[1] {
             assert_eq!(f.name, "add");
             assert!(f.attrs.iter().any(|a| a.tokens == "no_mangle"));
             assert_eq!(f.abi, Some("C".to_string()));
+            assert!(f.is_unsafe); // proc is unsafe by default
             if let Stmt::Expr(Expr::Block(b)) = &f.body.stmts[0] {
                 assert!(b.is_unsafe);
             } else {
@@ -245,6 +248,30 @@ mod tests {
             }
             assert_eq!(f.params[0].ty, Type::UserDefined("c_int".to_string()));
             assert_eq!(f.ret_type, Some(Type::UserDefined("c_int".to_string())));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn test_transform_fn_remains_safe() {
+        let src = r#"
+            fn add_safe(a: int, b: int) -> int {
+                return a + b;
+            }
+        "#;
+        let program = parse_and_transform(src);
+        assert_eq!(program.items.len(), 1);
+
+        if let Item::Fn(f) = &program.items[0] {
+            assert_eq!(f.name, "add_safe");
+            assert!(!f.is_unsafe); // fn is safe by default
+            // The body should NOT contain a nested unsafe block
+            if let Stmt::Semi(Expr::Return(_)) = &f.body.stmts[0] {
+                // Statements are directly in the body, not nested in unsafe block
+            } else {
+                panic!("Expected return statement directly in body");
+            }
         } else {
             panic!("Expected function");
         }

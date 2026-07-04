@@ -97,7 +97,7 @@ impl Parser {
                 let s = self.parse_struct(attrs)?;
                 Ok(Item::Struct(s))
             }
-            Some(Token::Fn) | Some(Token::Unsafe) | Some(Token::Extern) => {
+            Some(Token::Fn) | Some(Token::Proc) | Some(Token::Unsafe) | Some(Token::Extern) => {
                 let f = self.parse_fn(attrs)?;
                 Ok(Item::Fn(f))
             }
@@ -158,7 +158,21 @@ impl Parser {
             }
         }
 
-        self.expect(Token::Fn)?;
+        let is_proc = match self.peek() {
+            Some(Token::Fn) => {
+                self.next_token();
+                false
+            }
+            Some(Token::Proc) => {
+                self.next_token();
+                true
+            }
+            other => return Err(format!("Expected fn or proc, found {:?}", other)),
+        };
+
+        if is_proc {
+            is_unsafe = true;
+        }
 
         let name = match self.next_token() {
             Some(Token::Ident(n)) => n,

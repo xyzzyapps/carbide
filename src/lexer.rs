@@ -8,6 +8,7 @@
 pub enum Token {
     // Keywords
     Fn,
+    Proc,
     Struct,
     Let,
     Mut,
@@ -137,6 +138,7 @@ impl<'a> Lexer<'a> {
 
                 let token = match ident.as_str() {
                     "fn" => Token::Fn,
+                    "proc" => Token::Proc,
                     "struct" => Token::Struct,
                     "let" => Token::Let,
                     "mut" => Token::Mut,
@@ -356,6 +358,24 @@ mod tests {
                 Token::Eq,
                 Token::CharLit('a'),
                 Token::Semicolon,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_proc() {
+        let source = "proc run() {}";
+        let lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Proc,
+                Token::Ident("run".to_string()),
+                Token::OpenParen,
+                Token::CloseParen,
+                Token::OpenBrace,
+                Token::CloseBrace,
             ]
         );
     }

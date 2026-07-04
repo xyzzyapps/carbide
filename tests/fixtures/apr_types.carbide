@@ -27,36 +27,36 @@ struct apr_buf_t {
 }
 
 // Pool lifecycle
-fn apr_pool_create(pool: apr_pool_t**, parent: apr_pool_t*) -> int {
+proc apr_pool_create(pool: apr_pool_t**, parent: apr_pool_t*) -> int {
     return 0;
 }
 
-fn apr_pool_destroy(pool: apr_pool_t*) -> void {
+proc apr_pool_destroy(pool: apr_pool_t*) -> void {
 }
 
 // File operations using APR-style signatures
-fn apr_file_open(fd: apr_file_t**, path: char const*, flags: int, perm: int, pool: apr_pool_t*) -> int {
+proc apr_file_open(fd: apr_file_t**, path: char const*, flags: int, perm: int, pool: apr_pool_t*) -> int {
     return 0;
 }
 
-fn apr_file_read(fd: apr_file_t*, buf: void*, nbytes: size_t*) -> int {
+proc apr_file_read(fd: apr_file_t*, buf: void*, nbytes: size_t*) -> int {
     return 0;
 }
 
-fn apr_file_write(fd: apr_file_t*, buf: void const*, nbytes: size_t*) -> int {
+proc apr_file_write(fd: apr_file_t*, buf: void const*, nbytes: size_t*) -> int {
     return 0;
 }
 
-fn apr_file_close(fd: apr_file_t*) -> int {
+proc apr_file_close(fd: apr_file_t*) -> int {
     return 0;
 }
 
 // Buffer allocation
-fn apr_buf_alloc(pool: apr_pool_t*, capacity: size_t) -> apr_buf_t* {
+proc apr_buf_alloc(pool: apr_pool_t*, capacity: size_t) -> apr_buf_t* {
     return 0;
 }
 
 // Stat-like info query
-fn apr_stat(finfo: apr_finfo_t*, path: char const*, wanted: int, pool: apr_pool_t*) -> int {
+proc apr_stat(finfo: apr_finfo_t*, path: char const*, wanted: int, pool: apr_pool_t*) -> int {
     return 0;
 }

@@ -8,7 +8,7 @@ struct FfiStruct {
     ptr: int*
 }
 
-fn compute(s: FfiStruct const*) -> int {
+proc compute(s: FfiStruct const*) -> int {
     let mut result: int = 0;
     if !(*s).ptr.is_null() {
         result = *(*s).ptr + (*s).val;

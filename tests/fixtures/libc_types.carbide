@@ -37,26 +37,26 @@ struct TypeShowcase {
 }
 
 // Function using single-word C types
-fn add_ints(a: int, b: int) -> int {
+proc add_ints(a: int, b: int) -> int {
     return a + b;
 }
 
 // Function using unsigned types
-fn add_unsigned(a: unsigned int, b: unsigned long) -> unsigned long {
+proc add_unsigned(a: unsigned int, b: unsigned long) -> unsigned long {
     return a + b;
 }
 
 // Function using float types
-fn multiply_floats(a: float, b: double) -> double {
+proc multiply_floats(a: float, b: double) -> double {
     return a + b;
 }
 
 // Function using libc size_t
-fn measure(buf: void const*, len: size_t) -> size_t {
+proc measure(buf: void const*, len: size_t) -> size_t {
     return len;
 }
 
 // Function using long long
-fn big_add(a: long long, b: unsigned long long) -> long long {
+proc big_add(a: long long, b: unsigned long long) -> long long {
     return a + b;
 }
