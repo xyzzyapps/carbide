@@ -1,7 +1,7 @@
 # Carbide: C-Style Rust Transpiler
 
 <p align="center">
-  <img src="assets/logo.png" alt="Carbide Logo" width="220" />
+  <img src="assets/logo_transparent.png" alt="Carbide Logo" width="220" />
 </p>
 
 `carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C-style keywords and postfix pointer syntax into standard, FFI-compliant Rust code. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
