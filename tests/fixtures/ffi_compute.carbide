@@ -1,0 +1,19 @@
+// ffi_compute.crust - FFI struct with pointer arithmetic
+//
+// Tests struct with pointer fields, const pointer parameters,
+// pointer null checks, and dereference chains.
+
+struct FfiStruct {
+    val: int,
+    ptr: int*
+}
+
+fn compute(s: FfiStruct const*) -> int {
+    let mut result: int = 0;
+    if !(*s).ptr.is_null() {
+        result = *(*s).ptr + (*s).val;
+    } else {
+        result = (*s).val;
+    }
+    return result;
+}

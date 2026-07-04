@@ -1,0 +1,62 @@
+// libc_types.crust - Tests all libc-compatible C types
+//
+// This file exercises single-word, multi-word, and libc-specific
+// types through the crustc transpiler pipeline.
+
+struct TypeShowcase {
+    // Single-word C integer types
+    a_int: int,
+    a_uint: uint,
+    a_long: long,
+    a_char: char,
+
+    // C float types
+    a_float: float,
+    a_double: double,
+
+    // Multi-word integer types
+    a_uchar: unsigned char,
+    a_schar: signed char,
+    a_ushort: unsigned short,
+    a_short: short,
+    a_ulong: unsigned long,
+    a_longlong: long long,
+    a_ulonglong: unsigned long long,
+
+    // long double
+    a_ldouble: long double,
+
+    // libc-defined types
+    a_size: size_t,
+    a_ssize: ssize_t,
+    a_ptrdiff: ptrdiff_t,
+    a_uintptr: uintptr_t,
+    a_intptr: intptr_t,
+    a_off: off_t,
+    a_pid: pid_t
+}
+
+// Function using single-word C types
+fn add_ints(a: int, b: int) -> int {
+    return a + b;
+}
+
+// Function using unsigned types
+fn add_unsigned(a: unsigned int, b: unsigned long) -> unsigned long {
+    return a + b;
+}
+
+// Function using float types
+fn multiply_floats(a: float, b: double) -> double {
+    return a + b;
+}
+
+// Function using libc size_t
+fn measure(buf: void const*, len: size_t) -> size_t {
+    return len;
+}
+
+// Function using long long
+fn big_add(a: long long, b: unsigned long long) -> long long {
+    return a + b;
+}

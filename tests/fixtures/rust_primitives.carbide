@@ -1,0 +1,37 @@
+// rust_primitives.crust - Rust basic type passthrough test
+//
+// Verifies that standard Rust primitive types are left untouched
+// by the transpiler while still being valid in crust syntax.
+
+struct RustNativeTypes {
+    a: i8,
+    b: i16,
+    c: i32,
+    d: i64,
+    e: i128,
+    f: isize,
+    g: u8,
+    h: u16,
+    i: u32,
+    j: u64,
+    k: u128,
+    l: usize,
+    m: f32,
+    n: f64,
+    o: bool
+}
+
+// Function using Rust native types only
+fn rust_add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+// Mixed: Rust types with C pointers
+fn rust_with_ptr(data: u8*, len: usize) -> i64 {
+    return 0;
+}
+
+// Float operations
+fn rust_fma(a: f64, b: f64, c: f64) -> f64 {
+    return a * b + c;
+}
