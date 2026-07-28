@@ -129,3 +129,12 @@ The subcommand:
    crate-type = ["staticlib", "cdylib"]
    ```
 3. Performs the build and copies FFI static/dynamic libraries (`carbide.lib`, `libcarbide.a`, `carbide.dll`) back to the main project's `target/debug/` directory.
+
+## License
+
+MIT
+ 
+## Signature
+
+Original Research by Xyzzy, built with assistance from **Gemini 3.5**.  
+Specification target: the implementation described in [SPEC.md](SPEC.md).
