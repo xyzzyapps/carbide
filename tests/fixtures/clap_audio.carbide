@@ -1,0 +1,371 @@
+// clap_audio.carbide - CLAP (CLever Audio Plugin) ABI bindings written in Carbide.
+//
+// Transpiles the core of the CLAP audio plugin interface (free-audio/clap)
+// into FFI-compliant, no_std Rust.  Every struct mirrors the C ABI 1:1:
+//
+//   - stdint types (uint32_t, int16_t, ...) are written as Rust primitives
+//     (u32, i16, ...) and pass through the transpiler unchanged;
+//   - C function pointers are written `fn(params) -> ret` and transpile to
+//     `Option<unsafe extern "C" fn(params) -> ret>` because C callbacks are
+//     nullable and calling them is inherently unsafe;
+//   - `type` aliases transpile C typedefs (clap_id, clap_process_status, ...);
+//   - `T const*` postfix pointers transpile to `*const T`.
+//
+// Sources:
+//   https://github.com/free-audio/clap (MIT) - include/clap/*.h
+// Reference Rust binding: https://github.com/glowcoil/clap-sys
+
+// ---------------------------------------------------------------------------
+// Basic typedefs
+//   include/clap/id.h          -> clap_id
+//   include/clap/process.h     -> clap_process_status
+//   include/clap/fixedpoint.h  -> clap_beattime, clap_sectime
+//   include/clap/events.h      -> clap_note_expression
+//   include/clap/ext/params.h  -> clap_param_info_flags
+//   include/clap/ext/log.h     -> clap_log_severity
+// ---------------------------------------------------------------------------
+
+type clap_id = u32;
+type clap_process_status = i32;
+type clap_beattime = i64;
+type clap_sectime = i64;
+type clap_note_expression = i32;
+type clap_param_info_flags = u32;
+type clap_log_severity = i32;
+
+// CLAP version constants (include/clap/version.h).  CLAP 1.2.x is the
+// current stable ABI.
+const CLAP_VERSION_MAJOR: u32 = 1;
+const CLAP_VERSION_MINOR: u32 = 2;
+const CLAP_VERSION_REVISION: u32 = 10;
+
+// ---------------------------------------------------------------------------
+// clap_version (include/clap/version.h)
+// ---------------------------------------------------------------------------
+
+struct clap_version {
+    major: u32,
+    minor: u32,
+    revision: u32
+}
+
+// ---------------------------------------------------------------------------
+// Audio buffer (include/clap/audio-buffer.h)
+// ---------------------------------------------------------------------------
+
+struct clap_audio_buffer {
+    data32: float**,
+    data64: double**,
+    channel_count: u32,
+    latency: u32,
+    constant_mask: u64
+}
+
+// ---------------------------------------------------------------------------
+// Events (include/clap/events.h)
+//
+// CLAP events all start with a common header.  `type` is a C field name but
+// a Rust keyword, so it is renamed to `kind` here (clap-sys does the same).
+// C unions (clap_event) are modelled as plain structs; only the header and
+// the first concrete event payloads are bound.
+// ---------------------------------------------------------------------------
+
+struct clap_event_header {
+    size: u32,     // C: event size including this header
+    time: u32,     // C: sample offset within the buffer
+    space_id: u16, // C: event space
+    kind: u16,     // C: `type` - event type (renamed, Rust keyword)
+    flags: u32     // C: see clap_event_flags
+}
+
+struct clap_event_note {
+    header: clap_event_header,
+    note_id: i32,
+    port_index: i16,
+    channel: i16,
+    key: i16,
+    velocity: double
+}
+
+struct clap_event_note_expression {
+    header: clap_event_header,
+    expression_id: clap_note_expression,
+    note_id: i32,
+    port_index: i16,
+    channel: i16,
+    key: i16,
+    value: double
+}
+
+struct clap_event_param_value {
+    header: clap_event_header,
+    param_id: clap_id,
+    cookie: void*,
+    note_id: i32,
+    port_index: i16,
+    channel: i16,
+    key: i16,
+    value: double
+}
+
+struct clap_event_param_mod {
+    header: clap_event_header,
+    param_id: clap_id,
+    cookie: void*,
+    note_id: i32,
+    port_index: i16,
+    channel: i16,
+    key: i16,
+    amount: double
+}
+
+struct clap_event_param_gesture {
+    header: clap_event_header,
+    param_id: clap_id
+}
+
+struct clap_event_transport {
+    header: clap_event_header,
+    flags: u32,
+    song_pos_beats: clap_beattime,
+    song_pos_seconds: clap_sectime,
+    tempo: double,
+    tempo_inc: double,
+    loop_start_beats: clap_beattime,
+    loop_end_beats: clap_beattime,
+    loop_start_seconds: clap_sectime,
+    loop_end_seconds: clap_sectime,
+    bar_start: clap_beattime,
+    bar_number: i32,
+    tsig_num: u16,
+    tsig_denom: u16
+}
+
+struct clap_event_midi {
+    header: clap_event_header,
+    port_index: u16,
+    data: [u8; 3]
+}
+
+struct clap_event_midi_sysex {
+    header: clap_event_header,
+    port_index: u16,
+    buffer: u8 const*,
+    size: u32
+}
+
+struct clap_event_midi2 {
+    header: clap_event_header,
+    port_index: u16,
+    data: [u32; 4]
+}
+
+// Event lists delivered inside clap_process (include/clap/events.h).
+// The `get` / `size` / `try_push` members are nullable C callbacks.
+struct clap_input_events {
+    ctx: void*,
+    size: fn(list: clap_input_events const*) -> u32,
+    get: fn(list: clap_input_events const*, index: u32) -> clap_event_header const*
+}
+
+struct clap_output_events {
+    ctx: void*,
+    try_push: fn(list: clap_output_events const*, event: clap_event_header const*) -> bool
+}
+
+// ---------------------------------------------------------------------------
+// Process block (include/clap/process.h)
+// ---------------------------------------------------------------------------
+
+struct clap_process {
+    steady_time: i64,
+    frames_count: u32,
+    transport: clap_event_transport const*,
+    audio_inputs: clap_audio_buffer const*,
+    audio_outputs: clap_audio_buffer*,
+    audio_inputs_count: u32,
+    audio_outputs_count: u32,
+    in_events: clap_input_events const*,
+    out_events: clap_output_events const*
+}
+
+// ---------------------------------------------------------------------------
+// Streams used by the state extension (include/clap/stream.h)
+// ---------------------------------------------------------------------------
+
+struct clap_istream {
+    ctx: void*,
+    read: fn(stream: clap_istream const*, buffer: void*, size: u64) -> i64
+}
+
+struct clap_ostream {
+    ctx: void*,
+    write: fn(stream: clap_ostream const*, buffer: void const*, size: u64) -> i64
+}
+
+// ---------------------------------------------------------------------------
+// Plugin and descriptor (include/clap/plugin.h)
+// ---------------------------------------------------------------------------
+
+struct clap_plugin_descriptor {
+    clap_version: clap_version,
+    id: char const*,
+    name: char const*,
+    vendor: char const*,
+    url: char const*,
+    manual_url: char const*,
+    support_url: char const*,
+    version: char const*,
+    description: char const*,
+    features: char const* const*
+}
+
+struct clap_plugin {
+    desc: clap_plugin_descriptor const*,
+    plugin_data: void*,
+    init: fn(plugin: clap_plugin const*) -> bool,
+    destroy: fn(plugin: clap_plugin const*) -> void,
+    activate: fn(plugin: clap_plugin const*, sample_rate: double, min_frames_count: u32, max_frames_count: u32) -> bool,
+    deactivate: fn(plugin: clap_plugin const*) -> void,
+    start_processing: fn(plugin: clap_plugin const*) -> bool,
+    stop_processing: fn(plugin: clap_plugin const*) -> void,
+    reset: fn(plugin: clap_plugin const*) -> void,
+    process: fn(plugin: clap_plugin const*, process: clap_process const*) -> clap_process_status,
+    get_extension: fn(plugin: clap_plugin const*, id: char const*) -> void const*,
+    on_main_thread: fn(plugin: clap_plugin const*) -> void
+}
+
+// ---------------------------------------------------------------------------
+// Host (include/clap/host.h)
+// ---------------------------------------------------------------------------
+
+struct clap_host {
+    clap_version: clap_version,
+    host_data: void*,
+    name: char const*,
+    vendor: char const*,
+    url: char const*,
+    version: char const*,
+    get_extension: fn(host: clap_host const*, extension_id: char const*) -> void const*,
+    request_restart: fn(host: clap_host const*) -> void,
+    request_process: fn(host: clap_host const*) -> void,
+    request_callback: fn(host: clap_host const*) -> void
+}
+
+// ---------------------------------------------------------------------------
+// Extension: params (include/clap/ext/params.h)
+// ---------------------------------------------------------------------------
+
+struct clap_param_info {
+    id: clap_id,
+    flags: clap_param_info_flags,
+    cookie: void*,
+    name: [char; 256],
+    module: [char; 1024],
+    min_value: double,
+    max_value: double,
+    default_value: double
+}
+
+struct clap_plugin_params {
+    count: fn(plugin: clap_plugin const*) -> u32,
+    get_info: fn(plugin: clap_plugin const*, param_index: u32, param_info: clap_param_info*) -> bool,
+    get_value: fn(plugin: clap_plugin const*, param_id: clap_id, out_value: double*) -> bool
+}
+
+// ---------------------------------------------------------------------------
+// Extension: state (include/clap/ext/state.h)
+// ---------------------------------------------------------------------------
+
+struct clap_plugin_state {
+    save: fn(plugin: clap_plugin const*, stream: clap_ostream const*) -> bool,
+    load: fn(plugin: clap_plugin const*, stream: clap_istream const*) -> bool
+}
+
+struct clap_host_state {
+    mark_dirty: fn(host: clap_host const*) -> void
+}
+
+// ---------------------------------------------------------------------------
+// Extension: audio ports (include/clap/ext/audio-ports.h)
+// ---------------------------------------------------------------------------
+
+struct clap_audio_port_info {
+    id: clap_id,
+    name: [char; 256],
+    flags: u32,
+    channel_count: u32,
+    port_type: char const*,
+    in_place_pair: clap_id
+}
+
+struct clap_plugin_audio_ports {
+    count: fn(plugin: clap_plugin const*, is_input: bool) -> u32,
+    get: fn(plugin: clap_plugin const*, index: u32, is_input: bool, info: clap_audio_port_info*) -> bool
+}
+
+// ---------------------------------------------------------------------------
+// Extension: note ports (include/clap/ext/note-ports.h)
+// ---------------------------------------------------------------------------
+
+struct clap_note_port_info {
+    id: clap_id,
+    supported_dialects: u32,
+    preferred_dialect: u32,
+    name: [char; 256]
+}
+
+struct clap_plugin_note_ports {
+    count: fn(plugin: clap_plugin const*, is_input: bool) -> u32,
+    get: fn(plugin: clap_plugin const*, index: u32, is_input: bool, info: clap_note_port_info*) -> bool
+}
+
+// ---------------------------------------------------------------------------
+// Extension: log (include/clap/ext/log.h)
+// ---------------------------------------------------------------------------
+
+struct clap_host_log {
+    log: fn(host: clap_host const*, severity: clap_log_severity, msg: char const*) -> void
+}
+
+// ---------------------------------------------------------------------------
+// Factory and entry point (include/clap/factory/plugin-factory.h, entry.h)
+// ---------------------------------------------------------------------------
+
+struct clap_plugin_factory {
+    get_plugin_count: fn(factory: clap_plugin_factory const*) -> u32,
+    get_plugin_descriptor: fn(factory: clap_plugin_factory const*, index: u32) -> clap_plugin_descriptor const*,
+    create_plugin: fn(factory: clap_plugin_factory const*, host: clap_host const*, plugin_id: char const*) -> clap_plugin const*
+}
+
+struct clap_plugin_entry {
+    clap_version: clap_version,
+    init: fn(plugin_path: char const*) -> bool,
+    deinit: fn() -> void,
+    get_factory: fn(factory_id: char const*) -> void const*
+}
+
+// The single entry point symbol every CLAP dynamic library must export.
+// A real plugin fills the function pointers; None marks "not implemented".
+#[no_mangle]
+pub static clap_entry: clap_plugin_entry = clap_plugin_entry {
+    clap_version: clap_version { major: 1, minor: 2, revision: 10 },
+    init: None,
+    deinit: None,
+    get_factory: None
+};
+
+// ---------------------------------------------------------------------------
+// Helper procedures (transpiled bodies run in implicit unsafe context)
+// ---------------------------------------------------------------------------
+
+// Mirrors clap_version_is_compatible(): versions 0.x.y were the unstable
+// development ABI and are never compatible.
+fn clap_version_is_compatible(v: clap_version) -> bool {
+    return v.major >= 1;
+}
+
+// True when the plugin implemented its init() callback.
+proc plugin_has_init(plugin: clap_plugin const*) -> bool {
+    return !(*plugin).init.is_none();
+}

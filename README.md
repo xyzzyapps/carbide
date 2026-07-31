@@ -23,7 +23,7 @@ graph TD
         Pass1 --> Pass2[Postfix Pointer Flip T* -> *mut T]
         Pass2 --> Pass3[C-ABI fn signature + no_mangle]
         Pass3 --> Pass4["proc -> unsafe fn + implicit unsafe{} body"]
-        Pass4 --> Pass5[Auto #repr(C) on structs]
+        Pass4 --> Pass5["Auto #repr(C) on structs"]
     end
 
     Pass5 --> TransAST[Transformed AST]
@@ -84,6 +84,45 @@ Carbide supports C-style postfix pointer syntax:
   - `proc` declarations: Unsafe by default (emits `unsafe fn` in Rust, and automatically wraps all body statements in an implicit `unsafe {}` block, permitting low-level pointer dereferencing and arithmetic).
   - Explicit `unsafe fn` declarations are also supported and behave like `proc` (unsafe with implicit body wrapping).
 - **Auto-Repr**: Every struct definition in the AST is automatically prepended with the `#[repr(C)]` attribute to ensure stable C memory layout.
+- **FFI style lints**: Generated files carry `#![allow(non_camel_case_types)]`, `#![allow(non_snake_case)]`, and `#![allow(non_upper_case_globals)]` so C-style names in bindings compile warning-free (same hygiene as `bindgen` output).
+- **Raw items keep their `;`**: `const`, `static`, and other unparsed top-level items pass through verbatim *including* their terminating semicolon.
+
+### 5. Function Pointer Types (C callbacks)
+
+C function pointers are written with `fn` in type position — inside struct fields, parameters, return types, or `type` aliases — and transpile to nullable `Option<unsafe extern "C" fn(…) -> …>`:
+
+```carbide
+struct clap_plugin {
+    init: fn(plugin: clap_plugin const*) -> bool,
+    process: fn(plugin: clap_plugin const*, process: clap_process const*) -> clap_process_status
+}
+```
+
+```rust
+#[repr(C)]
+pub struct clap_plugin {
+    pub init: Option<unsafe extern "C" fn(plugin: *const clap_plugin) -> bool>,
+    pub process: Option<unsafe extern "C" fn(plugin: *const clap_plugin, process: *const clap_process) -> clap_process_status>,
+}
+```
+
+Parameter names are preserved; `Option<fn>` is FFI-safe via the null-pointer optimisation (the same representation used by `clap-sys` and `raylib-rs`).
+
+### 6. Type Aliases (C typedefs)
+
+```carbide
+type clap_id = u32;
+type AudioCallback = fn(buffer: void*, frames: uint) -> void;
+type Texture2D = Texture;
+```
+
+```rust
+pub type clap_id = u32;
+pub type AudioCallback = Option<unsafe extern "C" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;
+pub type Texture2D = Texture;
+```
+
+The RHS is a full Carbide type: C primitives are mapped and postfix pointers are flipped.
 
 ---
 
@@ -95,8 +134,39 @@ Carbide supports C-style postfix pointer syntax:
 - `src/parser.rs`: Hand-written recursive descent parser. Deeply parses structural items (functions, structs, enums, impls). Statement bodies are captured with balanced-brace tracking and stored as flat token streams.
 - `src/transform.rs`: Runs structural mutation passes over the AST. Applies type substitutions and postfix-to-prefix pointer rewrites on token streams.
 - `src/emitter.rs`: Formats the transformed AST back into compliant Rust code. Includes spacing-aware raw token emitter that handles `as *mut T` spacing and `}` newlines correctly.
-- `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile).
+- `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile), including compile checks for the CLAP and raylib bindings.
 - `tests/fixture_tests.rs`: Fixture-based runner that transpiles all `.carbide` files under `tests/fixtures/` and verifies output.
+- `tests/fixtures/clap_audio.carbide`: The **CLAP audio plugin ABI** (free-audio/clap 1.2) written in Carbide — descriptor, plugin, host, process/event structs, params/state/audio-ports/note-ports/log extensions, factory and entry point.
+- `tests/fixtures/raylib_api.carbide`: The **raylib API surface** (windowing, drawing, textures, and the audio module with `AudioCallback`) written in Carbide.
+
+---
+
+## Reference API Bindings
+
+The repository ships two real-world FFI bindings written in Carbide. Both
+transpile to `no_std` Rust that compiles cleanly (`cargo test` verifies this
+via `rustc`):
+
+### CLAP audio API (`tests/fixtures/clap_audio.carbide`)
+
+[CLAP](https://github.com/free-audio/clap) is the CLever Audio Plugin interface
+used by modern DAWs. The binding covers the core ABI: `clap_version`,
+`clap_plugin_descriptor`, `clap_plugin` (12 callback members), `clap_host`,
+`clap_process`/`clap_audio_buffer`, the event family, the params/state/
+audio-ports/note-ports/log extensions, `clap_plugin_factory`, and the
+`clap_entry` entry point. C callback members are `fn(...) -> ...` types;
+`clap_event_header.type` is renamed `kind` (`type` is a Rust keyword).
+
+### raylib API (`tests/fixtures/raylib_api.carbide`)
+
+[raylib](https://github.com/raysan5/raylib) is a zero-dependency C game
+library. The binding covers `Vector2/3/4`, `Matrix`, `Color`, `Rectangle`,
+`Image`/`Texture`/`RenderTexture`/`Font`, `Camera2D/3D`, the full audio module
+(`Wave`, `Sound`, `Music`, `AudioStream`, the `AudioCallback` typedef), and a
+representative set of window/drawing/texture/audio procedures.
+
+Both files use stub `unimplemented!()` bodies — they define the API contract;
+a real project links the C libraries or implements the functions in Rust.
 
 ---
 

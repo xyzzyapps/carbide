@@ -1,0 +1,456 @@
+// raylib_api.carbide - raylib bindings written in Carbide.
+//
+// Transpiles a representative slice of the raylib C API (window / drawing /
+// textures / audio) into FFI-compliant, no_std Rust.  Struct layouts mirror
+// the C ABI 1:1:
+//
+//   - float/int/unsigned char/... C primitives map to c_float/c_int/c_uchar;
+//   - `T const*` postfix pointers map to `*const T`;
+//   - C typedefs map to `type` aliases (Texture2D, AudioCallback, ...);
+//   - C function pointers map to `fn(...) -> ...` types
+//     (AudioCallback is raylib's audio-thread callback typedef).
+//
+// Every procedure here is a *stub* with an `unimplemented!()` body: the
+// dialect emits definitions, so a real project would link these against the
+// C library by replacing the bodies with FFI calls, or implement them in
+// Rust and expose them back to C (the raylib host).  The signatures are the
+// API contract; they transpile and compile as-is.
+//
+// Source: https://github.com/raysan5/raylib (zlib) - src/raylib.h
+// Reference Rust binding: https://github.com/deltaphc/raylib-rs
+
+// ---------------------------------------------------------------------------
+// C typedef aliases (src/raylib.h)
+// ---------------------------------------------------------------------------
+
+type Texture2D = Texture;
+type TextureCubemap = Texture;
+type RenderTexture2D = RenderTexture;
+type Quaternion = Vector4;
+
+// Audio thread callback: void (*AudioCallback)(void *bufferData, unsigned int frames);
+// Used by SetAudioStreamCallback() to pull new PCM data on the audio thread.
+type AudioCallback = fn(buffer: void*, frames: uint) -> void;
+
+// ---------------------------------------------------------------------------
+// Math / colour / shape types (src/raylib.h)
+// ---------------------------------------------------------------------------
+
+struct Vector2 {
+    x: float,
+    y: float
+}
+
+struct Vector3 {
+    x: float,
+    y: float,
+    z: float
+}
+
+struct Vector4 {
+    x: float,
+    y: float,
+    z: float,
+    w: float
+}
+
+struct Matrix {
+    m0: float, m4: float, m8: float, m12: float,
+    m1: float, m5: float, m9: float, m13: float,
+    m2: float, m6: float, m10: float, m14: float,
+    m3: float, m7: float, m11: float, m15: float
+}
+
+struct Color {
+    r: unsigned char,
+    g: unsigned char,
+    b: unsigned char,
+    a: unsigned char
+}
+
+struct Rectangle {
+    x: float,
+    y: float,
+    width: float,
+    height: float
+}
+
+// ---------------------------------------------------------------------------
+// Images, textures, render textures (src/raylib.h)
+// ---------------------------------------------------------------------------
+
+struct Image {
+    data: void*,
+    width: int,
+    height: int,
+    mipmaps: int,
+    format: int
+}
+
+struct Texture {
+    id: uint,
+    width: int,
+    height: int,
+    mipmaps: int,
+    format: int
+}
+
+struct RenderTexture {
+    id: uint,
+    texture: Texture,
+    depth: Texture
+}
+
+struct GlyphInfo {
+    value: int,
+    offset_x: int,
+    offset_y: int,
+    advance_x: int,
+    image: Image
+}
+
+struct Font {
+    base_size: int,
+    glyph_count: int,
+    glyph_padding: int,
+    texture: Texture2D,
+    recs: Rectangle*,
+    glyphs: GlyphInfo*
+}
+
+// ---------------------------------------------------------------------------
+// Cameras (src/raylib.h)
+// ---------------------------------------------------------------------------
+
+struct Camera3D {
+    position: Vector3,
+    target: Vector3,
+    up: Vector3,
+    fovy: float,
+    projection: int
+}
+
+struct Camera2D {
+    offset: Vector2,
+    target: Vector2,
+    rotation: float,
+    zoom: float
+}
+
+// ---------------------------------------------------------------------------
+// Audio module (src/raylib.h)
+// ---------------------------------------------------------------------------
+
+// Opaque internal audio engine handles (defined by the raylib C library).
+struct rAudioBuffer {}
+
+struct rAudioProcessor {}
+
+struct Wave {
+    frame_count: uint,
+    sample_rate: uint,
+    sample_size: uint,
+    channels: uint,
+    data: void*
+}
+
+struct AudioStream {
+    buffer: rAudioBuffer*,
+    processor: rAudioProcessor*,
+    sample_rate: uint,
+    sample_size: uint,
+    channels: uint
+}
+
+struct Sound {
+    stream: AudioStream,
+    frame_count: uint
+}
+
+struct Music {
+    stream: AudioStream,
+    frame_count: uint,
+    looping: bool,
+    ctx_type: int,
+    ctx_data: void*
+}
+
+// ---------------------------------------------------------------------------
+// Window and graphics device (core)
+// ---------------------------------------------------------------------------
+
+proc InitWindow(width: int, height: int, title: char const*) -> void {
+    unimplemented!()
+}
+
+proc CloseWindow() -> void {
+    unimplemented!()
+}
+
+proc WindowShouldClose() -> bool {
+    unimplemented!()
+}
+
+proc IsWindowReady() -> bool {
+    unimplemented!()
+}
+
+proc SetWindowTitle(title: char const*) -> void {
+    unimplemented!()
+}
+
+proc GetScreenWidth() -> int {
+    unimplemented!()
+}
+
+proc GetScreenHeight() -> int {
+    unimplemented!()
+}
+
+proc SetTargetFPS(fps: int) -> void {
+    unimplemented!()
+}
+
+proc GetFrameTime() -> float {
+    unimplemented!()
+}
+
+proc GetTime() -> double {
+    unimplemented!()
+}
+
+proc IsKeyPressed(key: int) -> bool {
+    unimplemented!()
+}
+
+// ---------------------------------------------------------------------------
+// Drawing (shapes, text, textures)
+// ---------------------------------------------------------------------------
+
+proc BeginDrawing() -> void {
+    unimplemented!()
+}
+
+proc EndDrawing() -> void {
+    unimplemented!()
+}
+
+proc ClearBackground(color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawFPS(pos_x: int, pos_y: int) -> void {
+    unimplemented!()
+}
+
+proc DrawPixel(pos_x: int, pos_y: int, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawLine(start_pos_x: int, start_pos_y: int, end_pos_x: int, end_pos_y: int, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawRectangle(pos_x: int, pos_y: int, width: int, height: int, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawRectangleRec(rec: Rectangle, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawCircle(center_x: int, center_y: int, radius: float, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawText(text: char const*, pos_x: int, pos_y: int, font_size: int, color: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawTextEx(font: Font, text: char const*, position: Vector2, font_size: float, spacing: float, tint: Color) -> void {
+    unimplemented!()
+}
+
+// ---------------------------------------------------------------------------
+// Textures
+// ---------------------------------------------------------------------------
+
+proc LoadTexture(file_name: char const*) -> Texture2D {
+    unimplemented!()
+}
+
+proc LoadTextureFromImage(image: Image) -> Texture2D {
+    unimplemented!()
+}
+
+proc UnloadTexture(texture: Texture2D) -> void {
+    unimplemented!()
+}
+
+proc DrawTexture(texture: Texture2D, pos_x: int, pos_y: int, tint: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawTextureEx(texture: Texture2D, position: Vector2, rotation: float, scale: float, tint: Color) -> void {
+    unimplemented!()
+}
+
+proc DrawTextureRec(texture: Texture2D, rec: Rectangle, position: Vector2, tint: Color) -> void {
+    unimplemented!()
+}
+
+proc BeginTextureMode(target: RenderTexture2D) -> void {
+    unimplemented!()
+}
+
+proc EndTextureMode() -> void {
+    unimplemented!()
+}
+
+// ---------------------------------------------------------------------------
+// 2D camera
+// ---------------------------------------------------------------------------
+
+proc BeginMode2D(camera: Camera2D) -> void {
+    unimplemented!()
+}
+
+proc EndMode2D() -> void {
+    unimplemented!()
+}
+
+// ---------------------------------------------------------------------------
+// Audio device and resources (raudio)
+// ---------------------------------------------------------------------------
+
+proc InitAudioDevice() -> void {
+    unimplemented!()
+}
+
+proc CloseAudioDevice() -> void {
+    unimplemented!()
+}
+
+proc IsAudioDeviceReady() -> bool {
+    unimplemented!()
+}
+
+proc SetMasterVolume(volume: float) -> void {
+    unimplemented!()
+}
+
+proc LoadWave(file_name: char const*) -> Wave {
+    unimplemented!()
+}
+
+proc LoadSound(file_name: char const*) -> Sound {
+    unimplemented!()
+}
+
+proc LoadSoundFromWave(wave: Wave) -> Sound {
+    unimplemented!()
+}
+
+proc UnloadWave(wave: Wave) -> void {
+    unimplemented!()
+}
+
+proc UnloadSound(sound: Sound) -> void {
+    unimplemented!()
+}
+
+proc PlaySound(sound: Sound) -> void {
+    unimplemented!()
+}
+
+proc StopSound(sound: Sound) -> void {
+    unimplemented!()
+}
+
+proc PauseSound(sound: Sound) -> void {
+    unimplemented!()
+}
+
+proc ResumeSound(sound: Sound) -> void {
+    unimplemented!()
+}
+
+proc IsSoundPlaying(sound: Sound) -> bool {
+    unimplemented!()
+}
+
+proc SetSoundVolume(sound: Sound, volume: float) -> void {
+    unimplemented!()
+}
+
+proc LoadMusicStream(file_name: char const*) -> Music {
+    unimplemented!()
+}
+
+proc UnloadMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc PlayMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc IsMusicStreamPlaying(music: Music) -> bool {
+    unimplemented!()
+}
+
+proc UpdateMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc StopMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc PauseMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc ResumeMusicStream(music: Music) -> void {
+    unimplemented!()
+}
+
+proc SeekMusicStream(music: Music, position: float) -> void {
+    unimplemented!()
+}
+
+proc SetMusicVolume(music: Music, volume: float) -> void {
+    unimplemented!()
+}
+
+proc LoadAudioStream(sample_rate: uint, sample_size: uint, channels: uint) -> AudioStream {
+    unimplemented!()
+}
+
+proc UnloadAudioStream(stream: AudioStream) -> void {
+    unimplemented!()
+}
+
+proc UpdateAudioStream(stream: AudioStream, data: void const*, frame_count: int) -> void {
+    unimplemented!()
+}
+
+proc SetAudioStreamCallback(stream: AudioStream, callback: AudioCallback) -> void {
+    unimplemented!()
+}
+
+// ---------------------------------------------------------------------------
+// Helpers with real bodies (demonstrate usable Carbide code)
+// ---------------------------------------------------------------------------
+
+// Colour constructor mirroring raylib's RAYLIBAPI Color (r, g, b, a) helper
+// convention.  `unsigned char` fields map to c_uchar (u8 on all targets).
+fn raylib_color(r: u8, g: u8, b: u8, a: u8) -> Color {
+    let mut c: Color = Color { r: r, g: g, b: b, a: a };
+    return c;
+}
+
+// 2D vector distance; exercises field access on a value type.
+fn vector2_length_squared(v: Vector2) -> float {
+    return v.x * v.x + v.y * v.y;
+}

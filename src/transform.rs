@@ -79,6 +79,7 @@ fn transform_item(item: &mut Item) {
         Item::Impl { methods, .. } => {
             for m in methods { transform_fn(m); }
         }
+        Item::TypeAlias { ty, .. } => transform_type(ty),
         // Enum, Use, Raw — no signature to transform; body text is left as-is
         // (enum variants don't contain type keywords in signature positions).
         _ => {}
@@ -133,6 +134,14 @@ fn transform_type(ty: &mut Type) {
         }
         Type::Pointer { base, .. } | Type::Reference { base, .. } | Type::Array { base, .. } => {
             transform_type(base);
+        }
+        Type::FnPointer { params, ret } => {
+            for param in params.iter_mut() {
+                transform_type(&mut param.ty);
+            }
+            if let Some(ret) = ret {
+                transform_type(ret);
+            }
         }
         Type::Primitive(_) => {} // Rust primitives pass through unchanged
     }

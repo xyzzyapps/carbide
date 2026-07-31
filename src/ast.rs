@@ -32,6 +32,13 @@ pub enum Item {
         target: String,
         methods: Vec<Function>,
     },
+    /// A `type Name = Type;` alias declaration.  The RHS type is parsed so
+    /// C type mapping and pointer flips apply (e.g. C `typedef` of a
+    /// function pointer: `type AudioCallback = fn(buffer: void*, frames: uint) -> void;`).
+    TypeAlias {
+        name: String,
+        ty: Type,
+    },
     /// Any other top-level item (`const`, `static`, `type`, …).
     /// Stored entirely as raw source text.
     Raw {
@@ -97,6 +104,14 @@ pub enum Type {
     Reference { base: Box<Type>, is_mut: bool },
     /// An array (`[T; N]`).
     Array { base: Box<Type>, len: String },
+    /// A C function pointer type: `fn(param: Type, …) -> Ret`.
+    ///
+    /// Emitted as `Option<unsafe extern "C" fn(…) -> Ret>` because C
+    /// callbacks are nullable and FFI-safe via pointer-null optimization.
+    FnPointer {
+        params: Vec<Param>,
+        ret: Option<Box<Type>>,
+    },
 }
 
 /// Standard Rust primitive type.

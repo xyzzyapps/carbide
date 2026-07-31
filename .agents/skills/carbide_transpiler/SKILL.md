@@ -41,7 +41,28 @@ Carbide is a low-level dialect of Rust designed for seamless C ABI compatibility
   - `T*` $\rightarrow$ `*mut T` (Mutable raw pointer)
   - `T const*` $\rightarrow$ `*const T` (Constant raw pointer)
   - `T**` $\rightarrow$ `*mut *mut T` (Nested pointers)
+- **Function Pointer Types (C callbacks)**:
+  - Written with `fn` in type position (struct fields, params, returns, aliases): `cb: fn(a: int, b: void*) -> bool`
+  - Transpiles to `Option<unsafe extern "C" fn(a: c_int, b: *mut c_void) -> bool>` — nullable C callback, param names preserved.
+- **Type Aliases (C typedefs)**:
+  - `type Name = Type;` parses the RHS as a full Carbide type with mapping/pointer flips: `type AudioCallback = fn(buffer: void*, frames: uint) -> void;` $\rightarrow$ `pub type AudioCallback = Option<unsafe extern "C" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;`
 - **Auto-Repr**:
   - Every struct definition is automatically prepended with `#[repr(C)]`.
 - **Bare-Metal Attribute**:
   - Every transpiled file has `#![no_std]` prepended to ensure bare-metal FFI compatibility.
+- **FFI style lints**:
+  - Generated files also carry `#![allow(non_camel_case_types)]`, `#![allow(non_snake_case)]`, and `#![allow(non_upper_case_globals)]`.
+- **Raw items**:
+  - `const` / `static` / other unparsed top-level items pass through verbatim **including their terminating `;`** (do not rely on the parser to re-emit it).
+
+### 3. Reference Bindings (fixtures)
+
+- `tests/fixtures/clap_audio.carbide` — CLAP audio plugin ABI (free-audio/clap 1.2): version/descriptor/plugin/host/process/events, params/state/audio-ports/note-ports/log extensions, factory, `clap_entry` static. `clap_event_header.type` is renamed `kind` (Rust keyword).
+- `tests/fixtures/raylib_api.carbide` — raylib API surface: math/colour/texture/camera/audio structs, `AudioCallback` fn-pointer typedef, window/draw/audio procedure stubs (`unimplemented!()` bodies).
+
+### 4. Testing
+
+- Unit tests live inline in `src/*.rs` (`cargo test`).
+- `tests/fixture_tests.rs` transpiles every fixture and asserts emitted content.
+- `tests/integration_tests.rs` transpiles `ffi_compute`, `clap_audio`, `raylib_api` and compiles the generated Rust with `rustc --crate-type=lib`.
+- New fixtures must not pull in `libc` unless they reference `size_t`-family types.

@@ -16,7 +16,10 @@ pub struct Emitter {
 impl Emitter {
     /// Create a new Emitter.
     pub fn new() -> Self {
-        Self { output: String::new(), indent_level: 0 }
+        Self {
+            output: String::new(),
+            indent_level: 0,
+        }
     }
 
     /// Retrieve the final emitted source.
@@ -53,11 +56,25 @@ impl Emitter {
         }
         let items_src = tmp.finish();
 
-        let libc_types = ["size_t", "ssize_t", "ptrdiff_t", "uintptr_t",
-                          "intptr_t", "off_t", "pid_t"];
+        let libc_types = [
+            "size_t",
+            "ssize_t",
+            "ptrdiff_t",
+            "uintptr_t",
+            "intptr_t",
+            "off_t",
+            "pid_t",
+        ];
         let needs_libc = libc_types.iter().any(|t| items_src.contains(t));
 
-        self.output.push_str("#![no_std]\n\n");
+        self.output.push_str("#![no_std]\n");
+        // FFI bindings carry C-style names (snake_case types, SCREAMING
+        // constants) - silence the style lints that would otherwise fire on
+        // every generated binding (same hygiene as bindgen output).
+        self.output.push_str("#![allow(non_camel_case_types)]\n");
+        self.output.push_str("#![allow(non_snake_case)]\n");
+        self.output
+            .push_str("#![allow(non_upper_case_globals)]\n\n");
         self.output.push_str("use core::ffi::*;\n");
         if needs_libc {
             self.output.push_str("use libc::*;\n");
@@ -88,7 +105,9 @@ impl Emitter {
                 self.line(&format!("enum {} {{", name));
                 // Body already contains the user's enum variants verbatim
                 self.output.push_str(body);
-                if !body.ends_with('\n') { self.output.push('\n'); }
+                if !body.ends_with('\n') {
+                    self.output.push('\n');
+                }
                 self.line("}");
             }
 
@@ -101,6 +120,13 @@ impl Emitter {
                 }
                 self.indent_level -= 1;
                 self.line("}");
+            }
+
+            Item::TypeAlias { name, ty } => {
+                self.indent();
+                self.output.push_str(&format!("pub type {} = ", name));
+                self.emit_type(ty);
+                self.output.push_str(";\n");
             }
 
             Item::Raw { attrs, src } => {
@@ -154,7 +180,9 @@ impl Emitter {
         self.output.push_str(&format!("fn {}(", f.name));
 
         for (i, p) in f.params.iter().enumerate() {
-            if i > 0 { self.output.push_str(", "); }
+            if i > 0 {
+                self.output.push_str(", ");
+            }
             self.output.push_str(&format!("{}: ", p.name));
             self.emit_type(&p.ty);
         }
@@ -208,6 +236,24 @@ impl Emitter {
                 self.emit_type(base);
                 self.output.push_str(&format!("; {}]", len));
             }
+            Type::FnPointer { params, ret } => {
+                // C function pointers are nullable → Option<…> with the
+                // pointer-null optimisation, and calling into C is unsafe.
+                self.output.push_str("Option<unsafe extern \"C\" fn(");
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 {
+                        self.output.push_str(", ");
+                    }
+                    self.output.push_str(&format!("{}: ", p.name));
+                    self.emit_type(&p.ty);
+                }
+                self.output.push(')');
+                if let Some(ret) = ret {
+                    self.output.push_str(" -> ");
+                    self.emit_type(ret);
+                }
+                self.output.push('>');
+            }
         }
     }
 }
@@ -246,17 +292,58 @@ mod tests {
         "#;
         let output = transpile(src);
 
-        assert!(output.contains("#![no_std]"),   "Missing no_std");
+        assert!(output.contains("#![no_std]"), "Missing no_std");
         assert!(output.contains("use core::ffi::*;"), "Missing ffi import");
-        assert!(!output.contains("use libc::*;"),    "Unexpected libc import");
-        assert!(output.contains("#[repr(C)]"),        "Missing repr(C)");
-        assert!(output.contains("pub struct Point"),  "Missing struct");
-        assert!(output.contains("pub x: c_int"),      "Missing c_int field");
-        assert!(output.contains("pub y: *mut c_int"), "Missing pointer field");
-        assert!(output.contains("#[no_mangle]"),      "Missing no_mangle");
-        assert!(output.contains("pub unsafe extern \"C\" fn add(p: *const Point) -> c_int"),
-                "Wrong function signature");
+        assert!(!output.contains("use libc::*;"), "Unexpected libc import");
+        assert!(output.contains("#[repr(C)]"), "Missing repr(C)");
+        assert!(output.contains("pub struct Point"), "Missing struct");
+        assert!(output.contains("pub x: c_int"), "Missing c_int field");
+        assert!(
+            output.contains("pub y: *mut c_int"),
+            "Missing pointer field"
+        );
+        assert!(output.contains("#[no_mangle]"), "Missing no_mangle");
+        assert!(
+            output.contains("pub unsafe extern \"C\" fn add(p: *const Point) -> c_int"),
+            "Wrong function signature"
+        );
         // Body is emitted verbatim — user's formatting preserved
-        assert!(output.contains("return (*p).x;"),    "Body not preserved");
+        assert!(output.contains("return (*p).x;"), "Body not preserved");
+    }
+
+    #[test]
+    fn test_emitter_fn_pointer_and_type_alias() {
+        let src = r#"
+            type AudioCallback = fn(buffer: void*, frames: uint) -> void;
+
+            struct Plugin {
+                init: fn(plugin: Plugin const*) -> bool,
+                destroy: fn(plugin: Plugin const*) -> void
+            }
+        "#;
+        let output = transpile(src);
+
+        // Type alias: C fn-pointer typedef → Option<unsafe extern "C" fn>
+        assert!(
+            output.contains("pub type AudioCallback = Option<unsafe extern \"C\" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;"),
+            "Wrong AudioCallback alias: {output}"
+        );
+
+        // Struct fn-pointer fields: nullable + C ABI
+        assert!(
+            output.contains(
+                "pub init: Option<unsafe extern \"C\" fn(plugin: *const Plugin) -> bool>,"
+            ),
+            "Wrong init field: {output}"
+        );
+        assert!(
+            output.contains(
+                "pub destroy: Option<unsafe extern \"C\" fn(plugin: *const Plugin) -> c_void>,"
+            ),
+            "Wrong destroy field: {output}"
+        );
+
+        // Both structs/aliases get their usual attributes
+        assert!(output.contains("#[repr(C)]"), "Missing repr(C) on struct");
     }
 }

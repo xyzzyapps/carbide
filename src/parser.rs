@@ -30,7 +30,11 @@ impl<'s> Parser<'s> {
     ///
     /// `source` must be the same string that was tokenised to produce `tokens`.
     pub fn new(source: &'s str, tokens: Vec<(Token, usize)>) -> Self {
-        Self { source, tokens, pos: 0 }
+        Self {
+            source,
+            tokens,
+            pos: 0,
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -63,7 +67,7 @@ impl<'s> Parser<'s> {
         match self.next_token() {
             Some(tok) if tok == expected => Ok(()),
             Some(tok) => Err(format!("Expected {:?}, found {:?}", expected, tok)),
-            None      => Err(format!("Expected {:?}, found EOF", expected)),
+            None => Err(format!("Expected {:?}, found EOF", expected)),
         }
     }
 
@@ -87,7 +91,7 @@ impl<'s> Parser<'s> {
         // Position of the opening `{` in source
         let open_pos = match self.peek_with_pos() {
             Some((Token::OpenBrace, p)) => p,
-            other => return Err(format!("Expected '{{', found {:?}", other.map(|(t,_)| t))),
+            other => return Err(format!("Expected '{{', found {:?}", other.map(|(t, _)| t))),
         };
         self.next_token(); // consume `{`
 
@@ -101,7 +105,9 @@ impl<'s> Parser<'s> {
             };
             self.pos += 1;
             match tok {
-                Token::OpenBrace  => { depth += 1; }
+                Token::OpenBrace => {
+                    depth += 1;
+                }
                 Token::CloseBrace => {
                     depth -= 1;
                     if depth == 0 {
@@ -149,10 +155,24 @@ impl<'s> Parser<'s> {
                         break;
                     }
                     match tok {
-                        Token::OpenBrace   => { depth_brace += 1; }
-                        Token::CloseBrace  => { if depth_brace > 0 { depth_brace -= 1; } else { break; } }
-                        Token::OpenParen   => { depth_paren += 1; }
-                        Token::CloseParen  => { if depth_paren > 0 { depth_paren -= 1; } }
+                        Token::OpenBrace => {
+                            depth_brace += 1;
+                        }
+                        Token::CloseBrace => {
+                            if depth_brace > 0 {
+                                depth_brace -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        Token::OpenParen => {
+                            depth_paren += 1;
+                        }
+                        Token::CloseParen => {
+                            if depth_paren > 0 {
+                                depth_paren -= 1;
+                            }
+                        }
                         _ => {}
                     }
                     self.pos += 1;
@@ -162,7 +182,11 @@ impl<'s> Parser<'s> {
 
         // `self.pos` now points at the stop token (or EOF).
         // The end of the captured region is the start of that token.
-        let end = self.tokens.get(self.pos).map(|(_, p)| *p).unwrap_or(self.source.len());
+        let end = self
+            .tokens
+            .get(self.pos)
+            .map(|(_, p)| *p)
+            .unwrap_or(self.source.len());
         self.source[start..end].trim().to_string()
     }
 
@@ -189,12 +213,16 @@ impl<'s> Parser<'s> {
             self.expect(Token::OpenBracket)?;
             let mut inner = String::new();
             while let Some(tok) = self.peek() {
-                if tok == &Token::CloseBracket { break; }
+                if tok == &Token::CloseBracket {
+                    break;
+                }
                 // Reconstruct attribute text from tokens
                 inner.push_str(&token_to_str(&self.next_token().unwrap()));
             }
             self.expect(Token::CloseBracket)?;
-            attrs.push(Attribute { tokens: inner.trim().to_string() });
+            attrs.push(Attribute {
+                tokens: inner.trim().to_string(),
+            });
         }
 
         match self.peek() {
@@ -205,16 +233,16 @@ impl<'s> Parser<'s> {
                 self.next_token(); // `use`
                 let mut path = String::new();
                 while let Some(tok) = self.peek() {
-                    if tok == &Token::Semicolon { break; }
+                    if tok == &Token::Semicolon {
+                        break;
+                    }
                     path.push_str(&token_to_str(&self.next_token().unwrap()));
                 }
                 self.expect(Token::Semicolon)?;
                 Ok(Item::Use(path))
             }
 
-            Some(Token::Struct) => {
-                Ok(Item::Struct(self.parse_struct(attrs)?))
-            }
+            Some(Token::Struct) => Ok(Item::Struct(self.parse_struct(attrs)?)),
 
             Some(Token::Impl) => {
                 if !attrs.is_empty() {
@@ -228,18 +256,24 @@ impl<'s> Parser<'s> {
                 self.expect(Token::OpenBrace)?;
                 let mut methods = Vec::new();
                 while let Some(tok) = self.peek() {
-                    if tok == &Token::CloseBrace { break; }
+                    if tok == &Token::CloseBrace {
+                        break;
+                    }
                     let mut method_attrs = Vec::new();
                     while let Some(Token::Pound) = self.peek() {
                         self.next_token();
                         self.expect(Token::OpenBracket)?;
                         let mut inner = String::new();
                         while let Some(tok) = self.peek() {
-                            if tok == &Token::CloseBracket { break; }
+                            if tok == &Token::CloseBracket {
+                                break;
+                            }
                             inner.push_str(&token_to_str(&self.next_token().unwrap()));
                         }
                         self.expect(Token::CloseBracket)?;
-                        method_attrs.push(Attribute { tokens: inner.trim().to_string() });
+                        method_attrs.push(Attribute {
+                            tokens: inner.trim().to_string(),
+                        });
                     }
                     methods.push(self.parse_fn(method_attrs)?);
                 }
@@ -266,11 +300,20 @@ impl<'s> Parser<'s> {
                 let mut depth = 1usize;
                 let mut close_pos = open_pos;
                 while self.pos < self.tokens.len() {
-                    let (tok, tok_pos) = { let (t, p) = &self.tokens[self.pos]; (t.clone(), *p) };
+                    let (tok, tok_pos) = {
+                        let (t, p) = &self.tokens[self.pos];
+                        (t.clone(), *p)
+                    };
                     self.pos += 1;
                     match tok {
-                        Token::OpenBrace  => depth += 1,
-                        Token::CloseBrace => { depth -= 1; if depth == 0 { close_pos = tok_pos; break; } }
+                        Token::OpenBrace => depth += 1,
+                        Token::CloseBrace => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_pos = tok_pos;
+                                break;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -278,17 +321,36 @@ impl<'s> Parser<'s> {
                 Ok(Item::Enum { name, body })
             }
 
-            Some(Token::Fn) | Some(Token::Proc)
-            | Some(Token::Unsafe) | Some(Token::Extern) => {
+            // `type Name = Type;` alias declaration (`type` is lexed as
+            // `Ident("type")`, mirroring how `enum` is handled above).
+            Some(Token::Ident(ref n)) if n == "type" => {
+                if !attrs.is_empty() {
+                    return Err("Attributes on 'type' aliases not supported".to_string());
+                }
+                self.next_token(); // `type`
+                let name = match self.next_token() {
+                    Some(Token::Ident(n)) => n,
+                    other => return Err(format!("Expected type alias name, found {:?}", other)),
+                };
+                self.expect(Token::Eq)?;
+                let ty = self.parse_type()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Item::TypeAlias { name, ty })
+            }
+
+            Some(Token::Fn) | Some(Token::Proc) | Some(Token::Unsafe) | Some(Token::Extern) => {
                 Ok(Item::Fn(self.parse_fn(attrs)?))
             }
 
             Some(_) => {
-                // Unknown item — capture raw source text up to `;` or a top-level `}`
-                let src = self.capture_raw_until(|t| *t == Token::Semicolon);
-                // Consume the `;` if present
+                // Unknown item — capture raw source text up to `;`
+                let mut src = self.capture_raw_until(|t| *t == Token::Semicolon);
+                // Re-attach the terminating `;`: capture_raw_until() stops
+                // *before* the stop token, so without this every `const` /
+                // `static` / `type`-style raw item would lose its semicolon.
                 if let Some(Token::Semicolon) = self.peek() {
                     self.next_token();
+                    src.push(';');
                 }
                 Ok(Item::Raw { attrs, src })
             }
@@ -311,18 +373,29 @@ impl<'s> Parser<'s> {
         self.expect(Token::OpenBrace)?;
         let mut fields = Vec::new();
         while let Some(tok) = self.peek() {
-            if tok == &Token::CloseBrace { break; }
+            if tok == &Token::CloseBrace {
+                break;
+            }
             let field_name = match self.next_token() {
                 Some(Token::Ident(n)) => n,
                 other => return Err(format!("Expected field name, found {:?}", other)),
             };
             self.expect(Token::Colon)?;
             let ty = self.parse_type()?;
-            fields.push(Field { name: field_name, ty });
-            if let Some(Token::Comma) = self.peek() { self.next_token(); }
+            fields.push(Field {
+                name: field_name,
+                ty,
+            });
+            if let Some(Token::Comma) = self.peek() {
+                self.next_token();
+            }
         }
         self.expect(Token::CloseBrace)?;
-        Ok(Struct { name, fields, attrs })
+        Ok(Struct {
+            name,
+            fields,
+            attrs,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -349,11 +422,13 @@ impl<'s> Parser<'s> {
         }
         // `fn` or `proc`
         let is_proc = match self.next_token() {
-            Some(Token::Fn)   => false,
+            Some(Token::Fn) => false,
             Some(Token::Proc) => true,
             other => return Err(format!("Expected 'fn' or 'proc', found {:?}", other)),
         };
-        if is_proc { is_unsafe = true; }
+        if is_proc {
+            is_unsafe = true;
+        }
 
         let name = match self.next_token() {
             Some(Token::Ident(n)) => n,
@@ -364,15 +439,22 @@ impl<'s> Parser<'s> {
         self.expect(Token::OpenParen)?;
         let mut params = Vec::new();
         while let Some(tok) = self.peek() {
-            if tok == &Token::CloseParen { break; }
+            if tok == &Token::CloseParen {
+                break;
+            }
             let param_name = match self.next_token() {
                 Some(Token::Ident(n)) => n,
                 other => return Err(format!("Expected parameter name, found {:?}", other)),
             };
             self.expect(Token::Colon)?;
             let ty = self.parse_type()?;
-            params.push(Param { name: param_name, ty });
-            if let Some(Token::Comma) = self.peek() { self.next_token(); }
+            params.push(Param {
+                name: param_name,
+                ty,
+            });
+            if let Some(Token::Comma) = self.peek() {
+                self.next_token();
+            }
         }
         self.expect(Token::CloseParen)?;
 
@@ -390,7 +472,15 @@ impl<'s> Parser<'s> {
         // we ignore that and just capture verbatim).
         let (_, body_src) = self.capture_body()?;
 
-        Ok(Function { name, params, ret_type, body_src, is_unsafe, abi, attrs })
+        Ok(Function {
+            name,
+            params,
+            ret_type,
+            body_src,
+            is_unsafe,
+            abi,
+            attrs,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -415,13 +505,19 @@ impl<'s> Parser<'s> {
             match self.peek() {
                 Some(Token::Star) => {
                     self.next_token();
-                    ty = Type::Pointer { base: Box::new(ty), is_const: false };
+                    ty = Type::Pointer {
+                        base: Box::new(ty),
+                        is_const: false,
+                    };
                 }
                 Some(Token::Const) => {
                     self.next_token();
                     self.expect(Token::Star)?;
                     // const* wraps the *current* ty, then we loop again for `**`
-                    ty = Type::Pointer { base: Box::new(ty), is_const: true };
+                    ty = Type::Pointer {
+                        base: Box::new(ty),
+                        is_const: true,
+                    };
                 }
                 _ => break,
             }
@@ -442,47 +538,119 @@ impl<'s> Parser<'s> {
                     other => return Err(format!("Expected array length, found {:?}", other)),
                 };
                 self.expect(Token::CloseBracket)?;
-                return Ok(Type::Array { base: Box::new(elem_ty), len });
+                return Ok(Type::Array {
+                    base: Box::new(elem_ty),
+                    len,
+                });
             }
             // `&[mut] T` reference
             Some(Token::Ampersand) => {
                 self.next_token();
                 let is_mut = if let Some(Token::Mut) = self.peek() {
-                    self.next_token(); true
-                } else { false };
+                    self.next_token();
+                    true
+                } else {
+                    false
+                };
                 let inner = self.parse_type()?;
-                return Ok(Type::Reference { base: Box::new(inner), is_mut });
+                return Ok(Type::Reference {
+                    base: Box::new(inner),
+                    is_mut,
+                });
             }
             // C primitive keywords
-            Some(Token::Void) => { self.next_token(); return Ok(Type::UserDefined("void".to_string())); }
-            Some(Token::Int)  => { self.next_token(); return Ok(Type::UserDefined("int".to_string())); }
-            Some(Token::Uint) => { self.next_token(); return Ok(Type::UserDefined("uint".to_string())); }
+            Some(Token::Void) => {
+                self.next_token();
+                return Ok(Type::UserDefined("void".to_string()));
+            }
+            Some(Token::Int) => {
+                self.next_token();
+                return Ok(Type::UserDefined("int".to_string()));
+            }
+            Some(Token::Uint) => {
+                self.next_token();
+                return Ok(Type::UserDefined("uint".to_string()));
+            }
             Some(Token::Long) => {
                 self.next_token();
                 // long long, long double, long int
                 match self.peek() {
-                    Some(Token::Long)  => { self.next_token(); return Ok(Type::UserDefined("long long".to_string())); }
-                    Some(Token::Ident(ref n)) if n == "double" => { self.next_token(); return Ok(Type::UserDefined("long double".to_string())); }
-                    Some(Token::Int)   => { self.next_token(); return Ok(Type::UserDefined("long int".to_string())); }
+                    Some(Token::Long) => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("long long".to_string()));
+                    }
+                    Some(Token::Ident(ref n)) if n == "double" => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("long double".to_string()));
+                    }
+                    Some(Token::Int) => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("long int".to_string()));
+                    }
                     _ => {}
                 }
                 return Ok(Type::UserDefined("long".to_string()));
             }
-            Some(Token::Char) => { self.next_token(); return Ok(Type::UserDefined("char".to_string())); }
+            Some(Token::Char) => {
+                self.next_token();
+                return Ok(Type::UserDefined("char".to_string()));
+            }
+            // `fn(param: Type, …) -> Ret` function pointer type (C callback).
+            // Emitted as `Option<unsafe extern "C" fn(…) -> Ret>`; the parser
+            // consumes the full parenthesised parameter list and the arrow
+            // return type before returning.
+            Some(Token::Fn) => {
+                self.next_token(); // `fn`
+                self.expect(Token::OpenParen)?;
+                let mut params = Vec::new();
+                while let Some(tok) = self.peek() {
+                    if tok == &Token::CloseParen {
+                        break;
+                    }
+                    let param_name = match self.next_token() {
+                        Some(Token::Ident(n)) => n,
+                        other => return Err(format!("Expected parameter name, found {:?}", other)),
+                    };
+                    self.expect(Token::Colon)?;
+                    let ty = self.parse_type()?;
+                    params.push(Param {
+                        name: param_name,
+                        ty,
+                    });
+                    if let Some(Token::Comma) = self.peek() {
+                        self.next_token();
+                    }
+                }
+                self.expect(Token::CloseParen)?;
+                let ret = if let Some(Token::Arrow) = self.peek() {
+                    self.next_token();
+                    Some(Box::new(self.parse_type()?))
+                } else {
+                    None
+                };
+                return Ok(Type::FnPointer { params, ret });
+            }
             // `*mut T` / `*const T` (Rust-prefix form already written in source)
             Some(Token::Star) => {
                 self.next_token();
                 let is_const = if let Some(Token::Const) = self.peek() {
-                    self.next_token(); true
+                    self.next_token();
+                    true
                 } else if let Some(Token::Mut) = self.peek() {
-                    self.next_token(); false
-                } else { false };
+                    self.next_token();
+                    false
+                } else {
+                    false
+                };
                 let inner = self.parse_type()?;
-                return Ok(Type::Pointer { base: Box::new(inner), is_const });
+                return Ok(Type::Pointer {
+                    base: Box::new(inner),
+                    is_const,
+                });
             }
             Some(Token::Ident(_)) => {}
             Some(other) => return Err(format!("Expected type, found {:?}", other)),
-            None         => return Err("Expected type, found EOF".to_string()),
+            None => return Err("Expected type, found EOF".to_string()),
         }
 
         // Identifier — check for multi-word C types and Rust primitives
@@ -495,19 +663,32 @@ impl<'s> Parser<'s> {
             "unsigned" => {
                 // unsigned [char|short|int|long|long long|…]
                 match self.peek().cloned() {
-                    Some(Token::Char)  => { self.next_token(); return Ok(Type::UserDefined("unsigned char".to_string())); }
-                    Some(Token::Long)  => {
+                    Some(Token::Char) => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("unsigned char".to_string()));
+                    }
+                    Some(Token::Long) => {
                         self.next_token();
                         // unsigned long long
-                        if let Some(Token::Long) = self.peek() { self.next_token(); return Ok(Type::UserDefined("unsigned long long".to_string())); }
+                        if let Some(Token::Long) = self.peek() {
+                            self.next_token();
+                            return Ok(Type::UserDefined("unsigned long long".to_string()));
+                        }
                         // unsigned long int
-                        if let Some(Token::Int) = self.peek() { self.next_token(); }
+                        if let Some(Token::Int) = self.peek() {
+                            self.next_token();
+                        }
                         return Ok(Type::UserDefined("unsigned long".to_string()));
                     }
-                    Some(Token::Int) => { self.next_token(); return Ok(Type::UserDefined("unsigned int".to_string())); }
+                    Some(Token::Int) => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("unsigned int".to_string()));
+                    }
                     Some(Token::Ident(ref k)) if k == "short" => {
                         self.next_token();
-                        if let Some(Token::Int) = self.peek() { self.next_token(); }
+                        if let Some(Token::Int) = self.peek() {
+                            self.next_token();
+                        }
                         return Ok(Type::UserDefined("unsigned short".to_string()));
                     }
                     _ => return Ok(Type::UserDefined("unsigned int".to_string())),
@@ -515,32 +696,43 @@ impl<'s> Parser<'s> {
             }
             "signed" => {
                 match self.peek().cloned() {
-                    Some(Token::Char)  => { self.next_token(); return Ok(Type::UserDefined("signed char".to_string())); }
-                    Some(Token::Long)  => {
+                    Some(Token::Char) => {
+                        self.next_token();
+                        return Ok(Type::UserDefined("signed char".to_string()));
+                    }
+                    Some(Token::Long) => {
                         self.next_token();
                         // signed long long
-                        if let Some(Token::Long) = self.peek() { self.next_token(); return Ok(Type::UserDefined("signed long long".to_string())); }
-                        if let Some(Token::Int) = self.peek() { self.next_token(); }
+                        if let Some(Token::Long) = self.peek() {
+                            self.next_token();
+                            return Ok(Type::UserDefined("signed long long".to_string()));
+                        }
+                        if let Some(Token::Int) = self.peek() {
+                            self.next_token();
+                        }
                         return Ok(Type::UserDefined("signed long".to_string()));
                     }
                     Some(Token::Ident(ref k)) if k == "short" => {
                         self.next_token();
-                        if let Some(Token::Int) = self.peek() { self.next_token(); }
+                        if let Some(Token::Int) = self.peek() {
+                            self.next_token();
+                        }
                         return Ok(Type::UserDefined("signed short".to_string()));
                     }
                     _ => return Ok(Type::UserDefined("signed int".to_string())),
                 }
             }
             "short" => {
-                if let Some(Token::Int) = self.peek() { self.next_token(); }
+                if let Some(Token::Int) = self.peek() {
+                    self.next_token();
+                }
                 return Ok(Type::UserDefined("short".to_string()));
             }
             "double" => return Ok(Type::UserDefined("double".to_string())),
-            "float"  => return Ok(Type::UserDefined("float".to_string())),
+            "float" => return Ok(Type::UserDefined("float".to_string())),
             // Standard Rust primitives pass through as-is
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
-            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
-            "f32" | "f64" | "bool" | "str" => {
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+            | "u128" | "usize" | "f32" | "f64" | "bool" | "str" => {
                 return Ok(Type::Primitive(PrimitiveType::RustPrimitive(n)));
             }
             _ => return Ok(Type::UserDefined(n)),
@@ -557,52 +749,52 @@ impl<'s> Parser<'s> {
 
 fn token_to_str(tok: &Token) -> String {
     match tok {
-        Token::Fn        => "fn".to_string(),
-        Token::Proc      => "proc".to_string(),
-        Token::Struct    => "struct".to_string(),
-        Token::Let       => "let".to_string(),
-        Token::Mut       => "mut ".to_string(),
-        Token::Const     => "const".to_string(),
-        Token::Return    => "return".to_string(),
-        Token::Extern    => "extern".to_string(),
-        Token::Unsafe    => "unsafe".to_string(),
-        Token::Use       => "use".to_string(),
-        Token::Impl      => "impl".to_string(),
-        Token::As        => "as".to_string(),
-        Token::If        => "if".to_string(),
-        Token::Else      => "else".to_string(),
-        Token::Void      => "void".to_string(),
-        Token::Int       => "int".to_string(),
-        Token::Uint      => "uint".to_string(),
-        Token::Long      => "long".to_string(),
-        Token::Char      => "char".to_string(),
-        Token::Ident(s)  => s.clone(),
+        Token::Fn => "fn".to_string(),
+        Token::Proc => "proc".to_string(),
+        Token::Struct => "struct".to_string(),
+        Token::Let => "let".to_string(),
+        Token::Mut => "mut ".to_string(),
+        Token::Const => "const".to_string(),
+        Token::Return => "return".to_string(),
+        Token::Extern => "extern".to_string(),
+        Token::Unsafe => "unsafe".to_string(),
+        Token::Use => "use".to_string(),
+        Token::Impl => "impl".to_string(),
+        Token::As => "as".to_string(),
+        Token::If => "if".to_string(),
+        Token::Else => "else".to_string(),
+        Token::Void => "void".to_string(),
+        Token::Int => "int".to_string(),
+        Token::Uint => "uint".to_string(),
+        Token::Long => "long".to_string(),
+        Token::Char => "char".to_string(),
+        Token::Ident(s) => s.clone(),
         Token::IntLit(s) => s.clone(),
         Token::StrLit(s) => format!("\"{}\"", s),
-        Token::CharLit(c)=> format!("'{}'", c),
-        Token::Star      => "*".to_string(),
+        Token::CharLit(c) => format!("'{}'", c),
+        Token::Star => "*".to_string(),
         Token::Ampersand => "&".to_string(),
-        Token::Arrow     => "->".to_string(),
-        Token::Colon     => ":".to_string(),
+        Token::Arrow => "->".to_string(),
+        Token::Colon => ":".to_string(),
         Token::DoubleColon => "::".to_string(),
         Token::Semicolon => ";".to_string(),
-        Token::Comma     => ", ".to_string(),
-        Token::Eq        => "=".to_string(),
-        Token::EqEq      => "==".to_string(),
-        Token::Plus      => "+".to_string(),
-        Token::Minus     => "-".to_string(),
-        Token::Slash     => "/".to_string(),
-        Token::Pound     => "#".to_string(),
+        Token::Comma => ", ".to_string(),
+        Token::Eq => "=".to_string(),
+        Token::EqEq => "==".to_string(),
+        Token::Plus => "+".to_string(),
+        Token::Minus => "-".to_string(),
+        Token::Slash => "/".to_string(),
+        Token::Pound => "#".to_string(),
         Token::OpenParen => "(".to_string(),
-        Token::CloseParen=> ")".to_string(),
+        Token::CloseParen => ")".to_string(),
         Token::OpenBrace => "{".to_string(),
-        Token::CloseBrace=> "}".to_string(),
-        Token::OpenBracket  => "[".to_string(),
+        Token::CloseBrace => "}".to_string(),
+        Token::OpenBracket => "[".to_string(),
         Token::CloseBracket => "]".to_string(),
-        Token::Dot       => ".".to_string(),
-        Token::Bang      => "!".to_string(),
-        Token::Lt        => "<".to_string(),
-        Token::Gt        => ">".to_string(),
+        Token::Dot => ".".to_string(),
+        Token::Bang => "!".to_string(),
+        Token::Lt => "<".to_string(),
+        Token::Gt => ">".to_string(),
     }
 }
 
@@ -653,7 +845,13 @@ mod tests {
         let src = "fn f(p: int*) -> void {}";
         let prog = parse(src);
         if let Item::Fn(f) = &prog.items[0] {
-            assert!(matches!(&f.params[0].ty, Type::Pointer { is_const: false, .. }));
+            assert!(matches!(
+                &f.params[0].ty,
+                Type::Pointer {
+                    is_const: false,
+                    ..
+                }
+            ));
         } else {
             panic!("Expected Fn");
         }
@@ -664,8 +862,12 @@ mod tests {
         let src = "fn f(x: i32, y: u64) -> bool {}";
         let prog = parse(src);
         if let Item::Fn(f) = &prog.items[0] {
-            assert!(matches!(&f.params[0].ty, Type::Primitive(PrimitiveType::RustPrimitive(s)) if s == "i32"));
-            assert!(matches!(&f.params[1].ty, Type::Primitive(PrimitiveType::RustPrimitive(s)) if s == "u64"));
+            assert!(
+                matches!(&f.params[0].ty, Type::Primitive(PrimitiveType::RustPrimitive(s)) if s == "i32")
+            );
+            assert!(
+                matches!(&f.params[1].ty, Type::Primitive(PrimitiveType::RustPrimitive(s)) if s == "u64")
+            );
         } else {
             panic!("Expected Fn");
         }
@@ -693,6 +895,80 @@ mod tests {
             assert!(f.body_src.contains("else"));
         } else {
             panic!("Expected Fn");
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_pointer_type() {
+        // C callback fields: fn(name: Type, …) -> Ret inside a struct.
+        let src = r#"
+            struct Plugin {
+                init: fn(plugin: Plugin const*) -> bool,
+                destroy: fn(plugin: Plugin const*) -> void,
+                process: fn(plugin: Plugin const*, frames: uint) -> int*
+            }
+        "#;
+        let prog = parse(src);
+        if let Item::Struct(s) = &prog.items[0] {
+            assert_eq!(s.fields.len(), 3);
+            let init = &s.fields[0].ty;
+            match init {
+                Type::FnPointer { params, ret } => {
+                    assert_eq!(params.len(), 1);
+                    assert_eq!(params[0].name, "plugin");
+                    assert!(matches!(params[0].ty, Type::Pointer { is_const: true, .. }));
+                    let ret = ret.as_ref().expect("fn pointer should have a return type");
+                    // `bool` is a Rust primitive, preserved verbatim
+                    assert!(
+                        matches!(ret.as_ref(), Type::Primitive(PrimitiveType::RustPrimitive(n)) if n == "bool")
+                    );
+                }
+                other => panic!("Expected FnPointer type, got {:?}", other),
+            }
+            // Multi-param + pointer return: process field
+            let process = &s.fields[2].ty;
+            match process {
+                Type::FnPointer { params, ret } => {
+                    assert_eq!(params.len(), 2);
+                    let ret = ret.as_ref().expect("return type");
+                    assert!(matches!(
+                        ret.as_ref(),
+                        Type::Pointer {
+                            is_const: false,
+                            ..
+                        }
+                    ));
+                }
+                other => panic!("Expected FnPointer type, got {:?}", other),
+            }
+        } else {
+            panic!("Expected Struct");
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_pointer_param_and_return() {
+        // fn pointer as a function parameter and return type
+        let src = "proc register(cb: fn(a: int) -> int) -> fn(b: int) -> int { return cb; }";
+        let prog = parse(src);
+        if let Item::Fn(f) = &prog.items[0] {
+            assert!(matches!(f.params[0].ty, Type::FnPointer { .. }));
+            let ret = f.ret_type.as_ref().expect("return type");
+            assert!(matches!(ret, Type::FnPointer { .. }));
+        } else {
+            panic!("Expected Fn");
+        }
+    }
+
+    #[test]
+    fn test_parse_type_alias() {
+        let src = "type AudioCallback = fn(buffer: void*, frames: uint) -> void;";
+        let prog = parse(src);
+        if let Item::TypeAlias { name, ty } = &prog.items[0] {
+            assert_eq!(name, "AudioCallback");
+            assert!(matches!(ty, Type::FnPointer { .. }));
+        } else {
+            panic!("Expected TypeAlias item, got {:?}", prog.items[0]);
         }
     }
 }
