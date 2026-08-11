@@ -1,7 +1,5 @@
 # Learn Carbide in Y Minutes
 
-Ah, Carbide. The language of modern high-performance FFI and C/C++-style Rust systems programming.
-
 Carbide is a low-level dialect of Rust designed to merge C/C++-style types, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`. It can also compile directly into dynamic DLLs (`--dll`), static libraries (`--static`), or native executables (`--exe`).
 
 Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
