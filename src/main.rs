@@ -170,6 +170,20 @@ fn main() {
             cmd.arg("--edition=2021");
             cmd.arg(&rs_output_path);
 
+            let deps_dir = std::path::Path::new("target").join("debug").join("deps");
+            if deps_dir.exists() {
+                cmd.arg("-L").arg(format!("dependency={}", deps_dir.display()));
+                if let Ok(entries) = std::fs::read_dir(&deps_dir) {
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.starts_with("liblibc-") && fname.ends_with(".rlib") {
+                            cmd.arg(format!("--extern=libc={}", entry.path().display()));
+                            break;
+                        }
+                    }
+                }
+            }
+
             if let Some(crate_type) = effective_crate_type {
                 cmd.arg(format!("--crate-type={}", crate_type));
             }

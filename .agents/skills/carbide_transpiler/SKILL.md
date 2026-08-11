@@ -5,7 +5,7 @@ description: Reference guide for working with the Carbide dialect, maintaining t
 
 ## Carbide Dialect Overview
 
-Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibility. It maps C-style primitive type keywords, postfix pointers (`*`) and references (`&`), C atomics, function-pointer callbacks, and attributes to standard FFI-compliant Rust code, and directly drives `rustc` to compile dynamic DLLs (`.dll`), static archives (`.lib`), and standalone executables (`.exe`).
+Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibility. It maps C-style primitive type keywords, `<stdint.h>` fixed-width integers, postfix pointers (`*`) and references (`&`), C atomics, function-pointer callbacks, and attributes to standard FFI-compliant Rust code, and directly drives `rustc` to compile dynamic DLLs (`.dll`), static archives (`.lib`), and standalone executables (`.exe`).
 
 ### 1. Naming & File Extensions
 - **Dialect Name**: Carbide
@@ -19,7 +19,7 @@ Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibi
   - `proc name(...)`: Declares an **unsafe** procedure by default. Top-level free procedures transpile to `#[no_mangle] pub unsafe extern "system" fn name(...)` and automatically wrap body statements in an `unsafe {}` block.
   - `impl` methods emit standard Rust methods (`pub fn` or `pub unsafe fn`) without `#[no_mangle]` to avoid global symbol collisions.
   - Functions returning `void` omit the return type arrow `-> ...` in Rust (transpiling to unit `()`).
-- **C Primitive Type Mapping**:
+- **C Primitive & Fixed-Width Type Mapping**:
   - `void` $\rightarrow$ `core::ffi::c_void` (under raw pointers like `void*` $\rightarrow$ `*mut c_void`).
   - `void` return $\rightarrow$ unit `()` (omitted `-> ...` arrow).
   - `char` $\rightarrow$ `core::ffi::c_char` (and `char*` $\rightarrow$ `*mut c_char`).
@@ -29,6 +29,10 @@ Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibi
   - `long` $\rightarrow$ `core::ffi::c_long`, `unsigned long` $\rightarrow$ `core::ffi::c_ulong`.
   - `long long` $\rightarrow$ `core::ffi::c_longlong`, `unsigned long long` $\rightarrow$ `core::ffi::c_ulonglong`.
   - `float` $\rightarrow$ `core::ffi::c_float`, `double` / `long double` $\rightarrow$ `core::ffi::c_double`.
+  - `int8_t` $\rightarrow$ `i8`, `int16_t` $\rightarrow$ `i16`, `int32_t` $\rightarrow$ `i32`, `int64_t` $\rightarrow$ `i64`
+  - `uint8_t` $\rightarrow$ `u8`, `uint16_t` $\rightarrow$ `u16`, `uint32_t` $\rightarrow$ `u32`, `uint64_t` $\rightarrow$ `u64`
+  - `intmax_t` $\rightarrow$ `i64`, `uintmax_t` $\rightarrow$ `u64`
+  - `char16_t` $\rightarrow$ `u16`, `char32_t` $\rightarrow$ `u32`
 - **C/C++ Atomics & libc Types**:
   - `atomic_bool` $\rightarrow$ `core::sync::atomic::AtomicBool`
   - `atomic_int` $\rightarrow$ `core::sync::atomic::AtomicI32`, `atomic_uint` $\rightarrow$ `core::sync::atomic::AtomicU32`
@@ -36,7 +40,7 @@ Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibi
   - `atomic_size_t` / `atomic_uintptr_t` $\rightarrow$ `core::sync::atomic::AtomicUsize`
   - `atomic_intptr_t` $\rightarrow$ `core::sync::atomic::AtomicIsize`
   - `use core::sync::atomic::*;` is automatically imported when atomic types or `Ordering` are used.
-  - `use libc::*;` is conditionally imported for libc types (`size_t`, `off_t`, etc.).
+  - `use libc::*;` is conditionally imported using word-boundary matching for libc types (`size_t`, `off_t`, `time_t`, `FILE`, `iovec`, `sockaddr_in`, `pthread_t`, `va_list`, etc.).
 - **Postfix Pointer & Reference Syntax (C/C++ Conventions Exclusively)**:
   - `T*` or `T mut*` $\rightarrow$ `*mut T` (Mutable raw pointer)
   - `T const*` $\rightarrow$ `*const T` (Constant raw pointer)
@@ -57,6 +61,7 @@ Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibi
   - `-o <FILE>`: Specifies source or binary output destination.
 
 ### 3. Reference Bindings & Fixtures
+- `tests/fixtures/stdint_posix.carbide` — Fixed-width `<stdint.h>` and libc/POSIX types.
 - `tests/fixtures/atomics_operators.carbide` — Atomics, closures, operators, and `impl` methods.
 - `tests/fixtures/clap_audio.carbide` — CLAP audio plugin ABI (free-audio/clap 1.2).
 - `tests/fixtures/raylib_api.carbide` — raylib API surface.

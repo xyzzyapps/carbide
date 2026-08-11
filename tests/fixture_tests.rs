@@ -592,6 +592,32 @@ fn test_fixture_atomics_operators() {
 }
 
 #[test]
+fn test_fixture_stdint_posix() {
+    let fixture = Path::new("tests/fixtures/stdint_posix.carbide");
+    assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
+
+    let output = transpile_fixture(fixture);
+
+    // Verify stdint types map directly to Rust primitives
+    assert!(output.contains("pub a: i8,"), "Missing i8 field for int8_t");
+    assert!(output.contains("pub b: i16,"), "Missing i16 field for int16_t");
+    assert!(output.contains("pub c: i32,"), "Missing i32 field for int32_t");
+    assert!(output.contains("pub d: i64,"), "Missing i64 field for int64_t");
+    assert!(output.contains("pub u1: u8,"), "Missing u8 field for uint8_t");
+    assert!(output.contains("pub u2: u16,"), "Missing u16 field for uint16_t");
+    assert!(output.contains("pub u3: u32,"), "Missing u32 field for uint32_t");
+    assert!(output.contains("pub u4: u64,"), "Missing u64 field for uint64_t");
+    assert!(output.contains("pub max_signed: i64,"), "Missing i64 field for intmax_t");
+    assert!(output.contains("pub max_unsigned: u64,"), "Missing u64 field for uintmax_t");
+
+    // Verify libc types trigger libc import
+    assert!(output.contains("use libc::*;"), "Missing libc import for libc types");
+    assert!(output.contains("pub file_offset: off_t,"), "Missing off_t field");
+    assert!(output.contains("pub file_handle: *mut FILE,"), "Missing FILE* field");
+    assert!(output.contains("pub wide_char: wchar_t,"), "Missing wchar_t field");
+}
+
+#[test]
 fn test_all_fixtures_transpile() {
     let fixtures_dir = Path::new("tests/fixtures");
     let fixtures = discover_fixtures(fixtures_dir);
@@ -640,7 +666,7 @@ fn test_all_fixtures_transpile() {
             name
         );
 
-        if name == "libc_types" || name == "apr_types" {
+        if name == "libc_types" || name == "apr_types" || name == "stdint_posix" {
             assert!(
                 output.contains("use libc::*;"),
                 "Missing libc import in: {}",

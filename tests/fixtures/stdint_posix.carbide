@@ -1,0 +1,41 @@
+// stdint_posix.carbide - Tests C stdint fixed-width and libc types
+//
+
+struct FixedWidthStruct {
+    a: int8_t,
+    b: int16_t,
+    c: int32_t,
+    d: int64_t,
+    u1: uint8_t,
+    u2: uint16_t,
+    u3: uint32_t,
+    u4: uint64_t,
+    max_signed: intmax_t,
+    max_unsigned: uintmax_t,
+    c16: char16_t,
+    c32: char32_t,
+    least32: int_least32_t,
+    fast64: uint_fast64_t
+}
+
+struct CFileStreamState {
+    file_offset: off_t,
+    mtime: time_t,
+    cpu_clock: clock_t,
+    file_handle: FILE*,
+    file_pos: fpos_t,
+    buffer_len: size_t,
+    diff: ptrdiff_t,
+    wide_char: wchar_t
+}
+
+proc test_stdint_and_libc_operations(f: FixedWidthStruct*, p: CFileStreamState*) -> int32_t {
+    let mut sum: int64_t = (*f).d + ((*f).c as int64_t);
+    let mut unsigned_sum: uint64_t = (*f).u4 + ((*f).u3 as uint64_t);
+
+    let current_offset: off_t = (*p).file_offset;
+    let current_time: time_t = (*p).mtime;
+
+    let res: int32_t = (sum + (unsigned_sum as int64_t)) as int32_t;
+    return res;
+}

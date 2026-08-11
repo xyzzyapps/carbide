@@ -1,6 +1,6 @@
 # Carbide — Software Requirements Specification
 
-**Version:** 0.6.0
+**Version:** 0.8.0
 **Status:** Implemented
 **Date:** 2026-08-11
 
@@ -12,7 +12,7 @@ Carbide is a transpiler and compiler frontend that compiles **`.carbide`** files
 a low-level, C/C++-flavoured dialect of Rust designed for seamless C ABI and system
 FFI compatibility — into standard, FFI-compliant Rust, and directly drives `rustc`
 to produce static libraries (`.lib`/`.a`), dynamic DLLs (`.dll`/`.so`/`.dylib`), or executables (`.exe`). The dialect provides
-C-style primitive keywords, C++-style postfix pointer and reference notations (`*` and `&`),
+C-style primitive keywords, standard fixed-width types (`<stdint.h>`), C++-style postfix pointer and reference notations (`*` and `&`),
 C11/C++ atomic types, function-pointer types, and C typedef aliases, which are rewritten to their Rust FFI
 equivalents. Every other valid Rust construct passes through verbatim.
 
@@ -23,7 +23,7 @@ the reference API bindings shipped as fixtures:
    Plugin ABI, the cross-DAW audio plugin interface.
 2. **raylib API** (`tests/fixtures/raylib_api.carbide`) — the raylib game
    development library API surface (windowing, drawing, textures, audio).
-3. **atomics_operators / rust_syntax / ffi_compute / apr_types / libc_types** — syntax, atomics, and ABI integration fixtures.
+3. **stdint_posix / atomics_operators / rust_syntax / ffi_compute / apr_types / libc_types** — syntax, atomics, fixed-width types, and ABI integration fixtures.
 
 ---
 
@@ -52,50 +52,27 @@ flowchart TD
 
     subgraph Transformation Pipeline
         Parser --> AstPass["Transform Pass"]
-        AstPass --> Pass1["Type Mapping (int -> c_int, atomic_int -> AtomicI32, etc.)"]
+        AstPass --> Pass1["Type Mapping (int -> c_int, int32_t -> i32, atomic_int -> AtomicI32, etc.)"]
         Pass1 --> Pass2["Postfix Pointer & Reference Flips (T*, T&, T const*, T const&, mut*, mut&)"]
-        Pass2 --> Pass3["System ABI Injection for Free Functions (extern 'system' + #[no_mangle])"]
+        Pass2 --> Pass3["System ABI Injection for Free Functions (extern 'system' + #[no_mangle], omitted on main)"]
         Pass3 --> Pass4["proc -> unsafe fn"]
         Pass4 --> Pass5["#[repr(C)] on Structs"]
-        Pass5 --> Pass6["Body Transform (types, char* to c_char, mut& expressions, mult disambiguation)"]
+        Pass5 --> Pass6["Body Transform (types, stdint types, char* to c_char, mut& expressions, mult disambiguation)"]
     end
 
     subgraph Backend
-        Pass6 --> Emitter["Emitter (default std mode, optional --no-std, auto imports for libc/atomics)"]
+        Pass6 --> Emitter["Emitter (default std mode, optional --no-std, word-boundary auto imports for libc/atomics)"]
         Emitter --> Output[".rs Output"]
         Output --> Driver["Driver (rustc: --crate-type=cdylib/staticlib/bin/lib / cargo carbide)"]
         Driver --> Artifacts["Target Artifacts (.dll, .lib, .exe, .rlib)"]
     end
 ```
 
-### 3.1 Pipeline stages
-
-| Stage      | Module       | Responsibility                                                |
-|------------|--------------|---------------------------------------------------------------|
-| Lexer      | `src/lexer.rs` | Tokenizes the source; records byte offsets for every token. Supports extended operators (`\|`, `%`, `^`, `?`, `~`, `@`, `$`) for arbitrary Rust expressions in function bodies. |
-| Parser     | `src/parser.rs` | Recursive-descent parser for structural skeleton: top-level items, `fn`/`proc` signatures, struct fields, `type` aliases, postfix pointers/references. Enforces C++ postfix notation and rejects prefix `*`, `&`, and `const T*` type syntax. |
-| Transform  | `src/transform.rs` | Applies type substitutions (`int` → `c_int`, `atomic_int` → `AtomicI32`), postfix pointer/reference flips, system ABI injection on top-level free functions (`extern "system"` + `#[no_mangle]`, omitting on `main`), `#[repr(C)]`, body-text type and cast rewrites (including `char*` → `c_char` and `mut&` expressions), and binary multiplication disambiguation. |
-| Emitter    | `src/emitter.rs` | Reassembles Rust source: default `--std` mode, optional `--no-std` mode, conditional `use libc::*;` and `use core::sync::atomic::*;`, omission of `void` return arrows, and transformed skeleton with verbatim bodies. |
-| Driver     | `src/main.rs` | CLI (`carbide file.carbide [-o out] [-c] [--dll] [--static] [--exe] [--lib] [--crate-type=TYPE] [--std] [--no-std]`) and the `cargo carbide build` subcommand. |
-
 ---
 
-## 4. Dialect and CLI specification
+## 4. Dialect specification
 
-### 4.1 Target Compilation Flags
-
-| Flag | Target Crate Type | Output Artifact | Description |
-|:---|:---|:---|:---|
-| `--dll` / `--cdylib` / `--dylib` | `cdylib` | `.dll` (Windows), `.so` (Linux), `.dylib` (macOS) | Compiles a C-compatible dynamic link library |
-| `--static` / `--staticlib` | `staticlib` | `.lib` (Windows), `.a` (Linux/macOS) | Compiles a C-compatible static archive |
-| `--exe` / `--bin` | `bin` | `.exe` (Windows), ELF executable (Linux) | Compiles a standalone native executable |
-| `--lib` / `--rlib` | `lib` / `rlib` | `.rlib` | Compiles a Rust library artifact |
-| `--crate-type <TYPE>` | Any | Per crate type | Direct pass-through of crate type to `rustc` |
-| `-o <FILE>` | Output Path | `.rs` / binary | Targets explicit output path for source or binary artifact |
-
-Passing any target compilation flag automatically implies `-c` / `--compile`.
-
-### 4.2 C primitive & atomic type mapping
+### 4.1 C primitive, fixed-width & atomic type mapping
 
 | Carbide Type | Rust FFI / Core Equivalent | Description |
 |:---|:---|:---|
@@ -107,11 +84,31 @@ Passing any target compilation flag automatically implies `-c` / `--compile`.
 | `long` / `unsigned long` | `c_long` / `c_ulong` | C long integer |
 | `long long` / `unsigned long long` | `c_longlong` / `c_ulonglong` | 64-bit integer |
 | `float` / `double` / `long double` | `c_float` / `c_double` / `c_double` | Floating point types |
+| `int8_t` / `uint8_t` | `i8` / `u8` | Fixed-width 8-bit integer |
+| `int16_t` / `uint16_t` | `i16` / `u16` | Fixed-width 16-bit integer |
+| `int32_t` / `uint32_t` | `i32` / `u32` | Fixed-width 32-bit integer |
+| `int64_t` / `uint64_t` | `i64` / `u64` | Fixed-width 64-bit integer |
+| `intmax_t` / `uintmax_t` | `i64` / `u64` | Max width integer |
+| `char16_t` / `char32_t` | `u16` / `u32` | Unicode UTF-16 / UTF-32 code units |
+| `int_least8_t` .. `int_least64_t` | `i8` .. `i64` | Least-width integer types |
+| `int_fast8_t` .. `int_fast64_t` | `i8` .. `i64` | Fast-width integer types |
 | `atomic_bool` | `core::sync::atomic::AtomicBool` | C11/C++ atomic boolean |
 | `atomic_int` / `atomic_uint` | `core::sync::atomic::AtomicI32` / `AtomicU32` | 32-bit atomic integers |
 | `atomic_long` / `atomic_ulong` | `core::sync::atomic::AtomicI64` / `AtomicU64` | 64-bit atomic integers |
 | `atomic_size_t` / `atomic_uintptr_t` | `core::sync::atomic::AtomicUsize` | Size-width atomic integer |
 | `atomic_intptr_t` | `core::sync::atomic::AtomicIsize` | Pointer-width signed atomic integer |
+
+### 4.2 Extended libc, Sockets & POSIX Types
+Carbide uses word-boundary identifier scanning and automatically imports `use libc::*;` when any of the following types appear in the source:
+- **Sizes & Offsets**: `size_t`, `ssize_t`, `ptrdiff_t`, `intptr_t`, `uintptr_t`, `off_t`, `off64_t`, `wchar_t`
+- **Processes & Users**: `pid_t`, `uid_t`, `gid_t`, `id_t`, `idtype_t`
+- **Filesystem & Streams**: `mode_t`, `dev_t`, `ino_t`, `ino64_t`, `nlink_t`, `blksize_t`, `blkcnt_t`, `FILE`, `fpos_t`, `DIR`, `dirent`, `stat`, `stat64`
+- **Time & Clocks**: `time_t`, `clock_t`, `clockid_t`, `suseconds_t`, `timespec`, `timeval`
+- **Scatter/Gather I/O & Multiplexing**: `iovec`, `pollfd`, `nfds_t`, `fd_set`
+- **Sockets & Networking**: `socklen_t`, `sa_family_t`, `sockaddr`, `sockaddr_in`, `sockaddr_in6`, `sockaddr_storage`, `sockaddr_un`, `in_addr`, `in6_addr`, `in_addr_t`, `in_port_t`, `msghdr`, `cmsghdr`
+- **Pthreads & Synchronization**: `pthread_t`, `pthread_mutex_t`, `pthread_mutexattr_t`, `pthread_cond_t`, `pthread_condattr_t`, `pthread_rwlock_t`, `pthread_rwlockattr_t`, `pthread_key_t`, `pthread_once_t`, `pthread_attr_t`
+- **Signals & Resources**: `sigset_t`, `siginfo_t`, `sig_atomic_t`, `rlimit`, `rlimit64`, `rusage`, `rlim_t`
+- **Variadics & Dynamic Linking**: `va_list`, `Dl_info`
 
 ### 4.3 Postfix Pointers and References (C/C++ Conventions Exclusively)
 

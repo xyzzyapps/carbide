@@ -1,6 +1,8 @@
 # Learn Carbide in Y Minutes
 
-Carbide is a low-level dialect of Rust designed to merge C/C++-style types, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`. It can also compile directly into dynamic DLLs (`--dll`), static libraries (`--static`), or native executables (`--exe`).
+
+
+Carbide is a low-level dialect of Rust designed to merge C/C++-style types, `<stdint.h>` fixed-width integers, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`. It can also compile directly into dynamic DLLs (`--dll`), static libraries (`--static`), or native executables (`--exe`).
 
 Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
 
@@ -42,6 +44,13 @@ fn main() {
     // doubles are mapped to core::ffi::c_double (64-bit floating-point)
     let mut x_double: double = 0.0;
 
+    // <stdint.h> Fixed-Width Integer Types (mapped to native Rust primitives: i8, i16, i32, i64, u8, u16, u32, u64)
+    let mut i8_val: int8_t = -128;
+    let mut u8_val: uint8_t = 255;
+    let mut i32_val: int32_t = 1000;
+    let mut u64_val: uint64_t = 1000000;
+    let mut max_val: intmax_t = 9223372036854775807;
+
     // integer types may be unsigned (greater than or equal to zero)
     let mut ux_short: unsigned short = 0;
     let mut ux_int: unsigned int = 0;
@@ -50,6 +59,7 @@ fn main() {
     // size_t is an unsigned integer type used to represent sizes
     // (If size_t or other libc types are used, use libc::*; is automatically imported)
     let mut size: size_t = 0;
+    let mut offset: off_t = 0;
 
     // C Atomics (use core::sync::atomic::*; is automatically imported)
     let mut flag: atomic_bool = AtomicBool::new(true);

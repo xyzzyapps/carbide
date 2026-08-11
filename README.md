@@ -4,7 +4,7 @@
   <img src="assets/logo_transparent.png" alt="Carbide Logo" width="220" />
 </p>
 
-`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C/C++-style keywords, postfix pointer (`*`) and reference (`&`) syntax, C atomics, and FFI conventions into standard, FFI-compliant Rust code, and directly drives `rustc` to produce static libraries (`.lib`/`.a`), dynamic DLLs (`.dll`/`.so`/`.dylib`), or executables (`.exe`). The transpiler applies well-defined syntactic transformations and passes all other Rust code through unchanged, so **any valid Rust code works in a `.carbide` file**. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
+`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C/C++-style keywords, fixed-width integer types (`int8_t`..`int64_t`, `uint8_t`..`uint64_t`), postfix pointer (`*`) and reference (`&`) syntax, C atomics, and FFI conventions into standard, FFI-compliant Rust code, and directly drives `rustc` to produce static libraries (`.lib`/`.a`), dynamic DLLs (`.dll`/`.so`/`.dylib`), or executables (`.exe`). The transpiler applies well-defined syntactic transformations and passes all other Rust code through unchanged, so **any valid Rust code works in a `.carbide` file**. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ graph TD
     AST --> Transform[Transformation Pipeline]
 
     subgraph Transformation Passes
-        Transform --> Pass1[Type Substitution int/void/char/atomic_int -> c_int/c_void/c_char/AtomicI32]
+        Transform --> Pass1[Type Substitution int/int32_t/char/atomic_int -> c_int/i32/c_char/AtomicI32]
         Pass1 --> Pass2["Postfix Pointer & Reference Flips: T* -> *mut T, T& -> &mut T, T const& -> &T"]
         Pass2 --> Pass3["System ABI on top-level fn (extern 'system') + #[no_mangle] (omitted on main)"]
         Pass3 --> Pass4["proc -> unsafe fn + implicit unsafe{} body"]
@@ -54,26 +54,26 @@ graph TD
 
 ## Dialect Specification
 
-Carbide extends Rust by permitting C and C++ style declarations, pointers, references, and atomics in signatures and local bindings:
+Carbide extends Rust by permitting C and C++ style declarations, pointers, references, fixed-width types, and atomics in signatures and local bindings:
 
-### 1. Primitive C Types & Void Handling
-The transpiler automatically maps C-style primitive type keywords:
+### 1. Primitive C Types, Fixed-Width Integers & Void Handling
+The transpiler automatically maps C-style primitive and `<stdint.h>` type keywords:
 - `void` $\rightarrow$ `core::ffi::c_void` (under raw pointers like `void*` $\rightarrow$ `*mut c_void`).
 - `void` in function/callback return position $\rightarrow$ omitted return type / unit `()` (since Rust `c_void` is an uninhabited type that cannot be returned by value).
 - `char` $\rightarrow$ `core::ffi::c_char` (and `char*` $\rightarrow$ `*mut c_char`).
-- `signed char` $\rightarrow$ `core::ffi::c_schar`
-- `unsigned char` $\rightarrow$ `core::ffi::c_uchar`
-- `short` $\rightarrow$ `core::ffi::c_short`
-- `unsigned short` $\rightarrow$ `core::ffi::c_ushort`
-- `int` $\rightarrow$ `core::ffi::c_int`
-- `unsigned int` / `unsigned` / `uint` $\rightarrow$ `core::ffi::c_uint`
-- `long` $\rightarrow$ `core::ffi::c_long`
-- `unsigned long` $\rightarrow$ `core::ffi::c_ulong`
-- `long long` $\rightarrow$ `core::ffi::c_longlong`
-- `unsigned long long` $\rightarrow$ `core::ffi::c_ulonglong`
-- `float` $\rightarrow$ `core::ffi::c_float`
-- `double` $\rightarrow$ `core::ffi::c_double`
-- `long double` $\rightarrow$ `core::ffi::c_double`
+- `signed char` $\rightarrow$ `core::ffi::c_schar`, `unsigned char` $\rightarrow$ `core::ffi::c_uchar`
+- `short` $\rightarrow$ `core::ffi::c_short`, `unsigned short` $\rightarrow$ `core::ffi::c_ushort`
+- `int` $\rightarrow$ `core::ffi::c_int`, `unsigned int` / `unsigned` / `uint` $\rightarrow$ `core::ffi::c_uint`
+- `long` $\rightarrow$ `core::ffi::c_long`, `unsigned long` $\rightarrow$ `core::ffi::c_ulong`
+- `long long` $\rightarrow$ `core::ffi::c_longlong`, `unsigned long long` $\rightarrow$ `core::ffi::c_ulonglong`
+- `float` $\rightarrow$ `core::ffi::c_float`, `double` / `long double` $\rightarrow$ `core::ffi::c_double`
+- **`<stdint.h>` Fixed-Width Types**:
+  - `int8_t` $\rightarrow$ `i8`, `int16_t` $\rightarrow$ `i16`, `int32_t` $\rightarrow$ `i32`, `int64_t` $\rightarrow$ `i64`
+  - `uint8_t` $\rightarrow$ `u8`, `uint16_t` $\rightarrow$ `u16`, `uint32_t` $\rightarrow$ `u32`, `uint64_t` $\rightarrow$ `u64`
+  - `intmax_t` $\rightarrow$ `i64`, `uintmax_t` $\rightarrow$ `u64`
+  - `char16_t` $\rightarrow$ `u16`, `char32_t` $\rightarrow$ `u32`
+  - `int_least8_t`..`int_least64_t` $\rightarrow$ `i8`..`i64`, `uint_least8_t`..`uint_least64_t` $\rightarrow$ `u8`..`u64`
+  - `int_fast8_t`..`int_fast64_t` $\rightarrow$ `i8`..`i64`, `uint_fast8_t`..`uint_fast64_t` $\rightarrow$ `u8`..`u64`
 - Standard Rust types (e.g. `i32`, `u8`, `f32`, `bool`, `usize`) pass through unmodified.
 - Any valid Rust control flow (`while`, `loop`, `match`, `if`/`else`, `break`, `continue`, closures `|x| x * 2`, operators `|`, `^`, `%`, `?`) is captured and emitted verbatim.
 
@@ -87,9 +87,16 @@ The transpiler automatically maps C-style primitive type keywords:
   - `atomic_size_t` / `atomic_uintptr_t` $\rightarrow$ `core::sync::atomic::AtomicUsize`
   - `atomic_intptr_t` $\rightarrow$ `core::sync::atomic::AtomicIsize`
   - `use core::sync::atomic::*;` is automatically imported whenever atomics or `Ordering` are used.
-- **libc Types**:
-  - `size_t` $\rightarrow$ `libc::size_t`, `off_t` $\rightarrow$ `libc::off_t`, `pid_t` $\rightarrow$ `libc::pid_t`, etc.
-  - `use libc::*;` is conditionally imported when libc types appear.
+- **libc & POSIX Types**:
+  - `size_t`, `ssize_t`, `ptrdiff_t`, `intptr_t`, `uintptr_t`, `off_t`, `off64_t`, `wchar_t`
+  - `pid_t`, `uid_t`, `gid_t`, `id_t`, `idtype_t`
+  - `mode_t`, `dev_t`, `ino_t`, `ino64_t`, `nlink_t`, `blksize_t`, `blkcnt_t`, `FILE`, `fpos_t`, `DIR`, `dirent`, `stat`, `stat64`
+  - `time_t`, `clock_t`, `clockid_t`, `suseconds_t`, `timespec`, `timeval`
+  - `iovec`, `pollfd`, `nfds_t`, `fd_set`
+  - `socklen_t`, `sa_family_t`, `sockaddr`, `sockaddr_in`, `sockaddr_in6`, `sockaddr_storage`, `sockaddr_un`, `in_addr`, `in6_addr`, `in_addr_t`, `in_port_t`, `msghdr`, `cmsghdr`
+  - `pthread_t`, `pthread_mutex_t`, `pthread_mutexattr_t`, `pthread_cond_t`, `pthread_condattr_t`, `pthread_rwlock_t`, `pthread_rwlockattr_t`, `pthread_key_t`, `pthread_once_t`, `pthread_attr_t`
+  - `sigset_t`, `siginfo_t`, `sig_atomic_t`, `rlimit`, `rlimit64`, `rusage`, `rlim_t`, `va_list`, `Dl_info`
+  - `use libc::*;` is conditionally imported using word-boundary matching when any of these libc types appear in the source.
 
 ### 3. Postfix Pointers & References (C/C++ Conventions Exclusively)
 Carbide exclusively uses C and C++ style postfix notation for both pointers (`*`) and references (`&`). Prefix syntax (`*const T`, `*mut T`, `&T`, `&mut T`, `const T*`, `const T&`) in type positions is disallowed:
@@ -112,35 +119,6 @@ Carbide exclusively uses C and C++ style postfix notation for both pointers (`*`
 - **Auto-Repr**: Every struct definition in the AST is automatically prepended with the `#[repr(C)]` attribute to ensure stable C memory layout.
 - **FFI style lints**: Generated files carry `#![allow(non_camel_case_types)]`, `#![allow(non_snake_case)]`, and `#![allow(non_upper_case_globals)]`.
 
-### 5. Function Pointer Types (C/System Callbacks)
-
-C function pointers are written with `fn` in type position — inside struct fields, parameters, return types, or `type` aliases — and transpile to nullable `Option<unsafe extern "system" fn(…) [-> …]>`:
-
-```carbide
-struct clap_plugin {
-    init: fn(plugin: clap_plugin const*) -> bool,
-    destroy: fn(plugin: clap_plugin const*) -> void,
-    process: fn(plugin: clap_plugin const*, process: clap_process const*) -> clap_process_status
-}
-```
-
-```rust
-#[repr(C)]
-pub struct clap_plugin {
-    pub init: Option<unsafe extern "system" fn(plugin: *const clap_plugin) -> bool>,
-    pub destroy: Option<unsafe extern "system" fn(plugin: *const clap_plugin)>,
-    pub process: Option<unsafe extern "system" fn(plugin: *const clap_plugin, process: *const clap_process) -> clap_process_status>,
-}
-```
-
-### 6. Type Aliases (C typedefs)
-
-```carbide
-type clap_id = u32;
-type AudioCallback = fn(buffer: void*, frames: uint) -> void;
-type Texture2D = Texture;
-```
-
 ---
 
 ## Workspace Layout
@@ -149,10 +127,11 @@ type Texture2D = Texture;
 - `src/lexer.rs`: Token definitions and tokenizer logic. Supports C keywords, postfix `*` and `&`, and extended operators (`|`, `%`, `^`, `?`, `~`, `@`, `$`).
 - `src/ast.rs`: Intermediate representation nodes. Function, struct, and type alias AST definitions.
 - `src/parser.rs`: Hand-written recursive descent parser for structural items. Enforces C++-style postfix pointer/reference notation.
-- `src/transform.rs`: AST and body transformation passes. Handles types, atomic mapping, pointer/reference flips, system ABI, and binary multiplication disambiguation.
-- `src/emitter.rs`: Formats the transformed AST back into compliant Rust code with conditional imports for libc and atomics.
+- `src/transform.rs`: AST and body transformation passes. Handles types, stdint types, atomic mapping, pointer/reference flips, system ABI, and binary multiplication disambiguation.
+- `src/emitter.rs`: Formats the transformed AST back into compliant Rust code with word-boundary conditional imports for libc and atomics.
 - `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile) across all reference fixtures in std, no-std, dll, staticlib, and exe modes.
 - `tests/fixture_tests.rs`: Fixture test runner verifying transpiled output structure in `--std` and `--no-std` modes.
+- `tests/fixtures/stdint_posix.carbide`: Standard `<stdint.h>` and libc/POSIX types suite.
 - `tests/fixtures/atomics_operators.carbide`: Atomics, closures, and operator expressions suite.
 - `tests/fixtures/clap_audio.carbide`: The **CLAP audio plugin ABI** (free-audio/clap 1.2) written in Carbide.
 - `tests/fixtures/raylib_api.carbide`: The **raylib API surface** (windowing, drawing, textures, and audio) written in Carbide.

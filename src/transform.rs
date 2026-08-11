@@ -50,6 +50,35 @@ const TYPE_MAP: &[(&str, &str)] = &[
     ("short",   "c_short"),
     ("float",   "c_float"),
     ("double",  "c_double"),
+    // Fixed-width integer types (<stdint.h>)
+    ("int8_t",          "i8"),
+    ("int16_t",         "i16"),
+    ("int32_t",         "i32"),
+    ("int64_t",         "i64"),
+    ("uint8_t",         "u8"),
+    ("uint16_t",        "u16"),
+    ("uint32_t",        "u32"),
+    ("uint64_t",        "u64"),
+    ("intmax_t",        "i64"),
+    ("uintmax_t",       "u64"),
+    ("int_least8_t",    "i8"),
+    ("int_least16_t",   "i16"),
+    ("int_least32_t",   "i32"),
+    ("int_least64_t",   "i64"),
+    ("uint_least8_t",   "u8"),
+    ("uint_least16_t",  "u16"),
+    ("uint_least32_t",  "u32"),
+    ("uint_least64_t",  "u64"),
+    ("int_fast8_t",     "i8"),
+    ("int_fast16_t",    "i16"),
+    ("int_fast32_t",    "i32"),
+    ("int_fast64_t",    "i64"),
+    ("uint_fast8_t",    "u8"),
+    ("uint_fast16_t",   "u16"),
+    ("uint_fast32_t",   "u32"),
+    ("uint_fast64_t",   "u64"),
+    ("char16_t",        "u16"),
+    ("char32_t",        "u32"),
     // C Atomics mapping to Rust core::sync::atomic types
     ("atomic_bool",        "AtomicBool"),
     ("atomic_int",         "AtomicI32"),
@@ -694,5 +723,17 @@ mod tests {
         let out = apply_body_transforms(src);
         assert!(out.contains("(&mut num as *mut c_int) as *mut c_void"), "mut& cast should flip properly: {out}");
         assert!(out.contains("let r = &mut x;"), "mut& x should flip to &mut x");
+    }
+
+    #[test]
+    fn test_stdint_fixed_width_types_mapping() {
+        let src = "let a: int8_t = 1; let b: uint16_t = 2; let c: int32_t = 3; let d: uint64_t = 4; let e: intmax_t = 5; let f: char16_t = 6;";
+        let out = apply_body_transforms(src);
+        assert!(out.contains("let a: i8 = 1;"), "int8_t failed: {out}");
+        assert!(out.contains("let b: u16 = 2;"), "uint16_t failed: {out}");
+        assert!(out.contains("let c: i32 = 3;"), "int32_t failed: {out}");
+        assert!(out.contains("let d: u64 = 4;"), "uint64_t failed: {out}");
+        assert!(out.contains("let e: i64 = 5;"), "intmax_t failed: {out}");
+        assert!(out.contains("let f: u16 = 6;"), "char16_t failed: {out}");
     }
 }

@@ -79,9 +79,70 @@ impl Emitter {
             "uintptr_t",
             "intptr_t",
             "off_t",
+            "off64_t",
+            "wchar_t",
             "pid_t",
+            "uid_t",
+            "gid_t",
+            "id_t",
+            "idtype_t",
+            "mode_t",
+            "dev_t",
+            "ino_t",
+            "ino64_t",
+            "nlink_t",
+            "blksize_t",
+            "blkcnt_t",
+            "FILE",
+            "fpos_t",
+            "DIR",
+            "dirent",
+            "stat",
+            "stat64",
+            "time_t",
+            "clock_t",
+            "clockid_t",
+            "suseconds_t",
+            "timespec",
+            "timeval",
+            "iovec",
+            "pollfd",
+            "nfds_t",
+            "fd_set",
+            "socklen_t",
+            "sa_family_t",
+            "sockaddr",
+            "sockaddr_in",
+            "sockaddr_in6",
+            "sockaddr_storage",
+            "sockaddr_un",
+            "in_addr",
+            "in6_addr",
+            "in_addr_t",
+            "in_port_t",
+            "msghdr",
+            "cmsghdr",
+            "pthread_t",
+            "pthread_mutex_t",
+            "pthread_mutexattr_t",
+            "pthread_cond_t",
+            "pthread_condattr_t",
+            "pthread_rwlock_t",
+            "pthread_rwlockattr_t",
+            "pthread_key_t",
+            "pthread_once_t",
+            "pthread_attr_t",
+            "sigset_t",
+            "siginfo_t",
+            "sig_atomic_t",
+            "rlimit",
+            "rlimit64",
+            "rusage",
+            "rlim_t",
+            "va_list",
+            "Dl_info",
         ];
-        let needs_libc = libc_types.iter().any(|t| items_src.contains(t));
+        let needs_libc = libc_types.iter().any(|t| contains_word(&items_src, t));
 
         let atomic_types = [
             "AtomicBool",
@@ -94,7 +155,7 @@ impl Emitter {
             "AtomicPtr",
             "Ordering",
         ];
-        let needs_atomics = atomic_types.iter().any(|t| items_src.contains(t));
+        let needs_atomics = atomic_types.iter().any(|t| contains_word(&items_src, t));
 
         if self.no_std {
             self.output.push_str("#![no_std]\n");
@@ -306,6 +367,32 @@ fn is_void_type(ty: &Type) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Word-boundary matching helper
+// ---------------------------------------------------------------------------
+
+fn contains_word(text: &str, word: &str) -> bool {
+    let bytes = text.as_bytes();
+    let word_bytes = word.as_bytes();
+    let word_len = word_bytes.len();
+    if word_len == 0 || bytes.len() < word_len {
+        return false;
+    }
+    let mut i = 0;
+    while i + word_len <= bytes.len() {
+        if &bytes[i..i + word_len] == word_bytes {
+            let left_ok = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+            let right_idx = i + word_len;
+            let right_ok = right_idx == bytes.len() || !(bytes[right_idx].is_ascii_alphanumeric() || bytes[right_idx] == b'_');
+            if left_ok && right_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -420,5 +507,40 @@ mod tests {
         assert!(output.contains("use core::sync::atomic::*;"), "Missing core::sync::atomic import");
         assert!(output.contains("pub val: AtomicI32,"), "Missing AtomicI32 field");
         assert!(output.contains("pub flag: AtomicBool,"), "Missing AtomicBool field");
+    }
+
+    #[test]
+    fn test_emitter_posix_libc_import() {
+        let src = r#"
+            struct FileInfo {
+                owner: uid_t,
+                group: gid_t,
+                mode: mode_t,
+                modified: time_t,
+                fp: FILE*
+            }
+        "#;
+        let output = transpile(src);
+        assert!(output.contains("use libc::*;"), "Missing libc import for POSIX types");
+        assert!(output.contains("pub owner: uid_t,"), "Missing uid_t field");
+        assert!(output.contains("pub fp: *mut FILE,"), "Missing FILE* field");
+    }
+
+    #[test]
+    fn test_emitter_sockets_pthreads_iovec_import() {
+        let src = r#"
+            struct ServerState {
+                thread: pthread_t,
+                lock: pthread_mutex_t,
+                addr: sockaddr_in,
+                buffer: iovec
+            }
+        "#;
+        let output = transpile(src);
+        assert!(output.contains("use libc::*;"), "Missing libc import for sockets/pthreads/iovec");
+        assert!(output.contains("pub thread: pthread_t,"), "Missing pthread_t field");
+        assert!(output.contains("pub lock: pthread_mutex_t,"), "Missing pthread_mutex_t field");
+        assert!(output.contains("pub addr: sockaddr_in,"), "Missing sockaddr_in field");
+        assert!(output.contains("pub buffer: iovec,"), "Missing iovec field");
     }
 }

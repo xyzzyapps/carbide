@@ -59,14 +59,29 @@ fn transpile_and_compile_with_args(fixture: &Path, expected_snippets: &[&str], a
     }
 
     // 3. Run rustc on the generated code to compile as lib
-    let rustc_status = Command::new("rustc")
+    let mut rustc_cmd = Command::new("rustc");
+    rustc_cmd
         .arg("--edition=2021")
         .arg("--crate-type=lib")
         .arg(&rs_file)
         .arg("-o")
-        .arg(&lib_out)
-        .status()
-        .expect("Failed to run rustc");
+        .arg(&lib_out);
+
+    let deps_dir = Path::new("target").join("debug").join("deps");
+    if deps_dir.exists() {
+        rustc_cmd.arg("-L").arg(format!("dependency={}", deps_dir.display()));
+        if let Ok(entries) = fs::read_dir(&deps_dir) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.starts_with("liblibc-") && fname.ends_with(".rlib") {
+                    rustc_cmd.arg(format!("--extern=libc={}", entry.path().display()));
+                    break;
+                }
+            }
+        }
+    }
+
+    let rustc_status = rustc_cmd.status().expect("Failed to run rustc");
 
     assert!(
         rustc_status.success(),
@@ -182,6 +197,30 @@ fn test_integration_atomics_operators_compiles() {
             "pub fn new(init: c_int) -> Counter",
             "pub fn increment(self: &mut Counter, step: c_int) -> c_int",
             "pub unsafe extern \"system\" fn test_operators_and_closures",
+        ],
+    );
+}
+
+#[test]
+fn test_integration_stdint_posix_compiles() {
+    transpile_and_compile(
+        Path::new("tests/fixtures/stdint_posix.carbide"),
+        &[
+            "use libc::*;",
+            "pub a: i8,",
+            "pub b: i16,",
+            "pub c: i32,",
+            "pub d: i64,",
+            "pub u1: u8,",
+            "pub u2: u16,",
+            "pub u3: u32,",
+            "pub u4: u64,",
+            "pub max_signed: i64,",
+            "pub max_unsigned: u64,",
+            "pub file_offset: off_t,",
+            "pub file_handle: *mut FILE,",
+            "pub wide_char: wchar_t,",
+            "pub unsafe extern \"system\" fn test_stdint_and_libc_operations",
         ],
     );
 }
