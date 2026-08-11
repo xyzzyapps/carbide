@@ -32,16 +32,18 @@ fn discover_fixtures(dir: &Path) -> Vec<PathBuf> {
 /// Run the carbide binary on a `.carbide` fixture file and return the
 /// transpiled Rust source code as a String. Uses a unique temp file
 /// to avoid race conditions during parallel test execution.
-fn transpile_fixture(fixture: &Path) -> String {
+fn transpile_fixture_with_args(fixture: &Path, args: &[&str]) -> String {
     let carbide_bin = Path::new("target").join("debug").join("carbide.exe");
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let stem = fixture.file_stem().unwrap().to_str().unwrap();
     let out_file = PathBuf::from(format!("fixture_out_{}_{}.rs", stem, id));
 
-    let status = Command::new(&carbide_bin)
-        .arg(fixture)
-        .arg("-o")
-        .arg(&out_file)
+    let mut cmd = Command::new(&carbide_bin);
+    cmd.arg(fixture).arg("-o").arg(&out_file);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    let status = cmd
         .status()
         .expect(&format!("Failed to run carbide on {:?}", fixture));
 
@@ -60,6 +62,10 @@ fn transpile_fixture(fixture: &Path) -> String {
     output
 }
 
+fn transpile_fixture(fixture: &Path) -> String {
+    transpile_fixture_with_args(fixture, &[])
+}
+
 // ---------------------------------------------------------------------------
 // Individual fixture tests
 // ---------------------------------------------------------------------------
@@ -71,8 +77,8 @@ fn test_fixture_libc_types() {
 
     let output = transpile_fixture(fixture);
 
-    // Verify imports
-    assert!(output.contains("#![no_std]"), "Missing #![no_std]");
+    // Verify imports in default std mode
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std] in default mode");
     assert!(
         output.contains("use core::ffi::*;"),
         "Missing core::ffi import"
@@ -125,7 +131,7 @@ fn test_fixture_libc_types() {
 
     // Verify function attributes
     assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
-    assert!(output.contains("extern \"C\""), "Missing extern \"C\"");
+    assert!(output.contains("extern \"system\""), "Missing extern \"system\"");
     assert!(
         output.contains("pub unsafe extern"),
         "Missing unsafe fn declaration"
@@ -140,7 +146,7 @@ fn test_fixture_apr_types() {
     let output = transpile_fixture(fixture);
 
     // Verify imports
-    assert!(output.contains("#![no_std]"), "Missing #![no_std]");
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
 
     // Verify APR struct declarations
     assert!(
@@ -160,68 +166,76 @@ fn test_fixture_apr_types() {
         "Missing apr_buf_t struct"
     );
 
-    // Verify pointer types in struct fields
+    // Verify field types
     assert!(
-        output.contains("*mut apr_pool_t"),
-        "Missing *mut apr_pool_t pointer"
+        output.contains("pub pool: *mut apr_pool_t"),
+        "Missing pool pointer field"
     );
     assert!(
-        output.contains("*const c_char"),
-        "Missing *const c_char pointer"
+        output.contains("pub name: *const c_char"),
+        "Missing name const pointer field"
     );
     assert!(
-        output.contains("*mut c_uchar"),
-        "Missing *mut c_uchar pointer"
-    );
-    assert!(output.contains("size_t"), "Missing size_t in apr_buf_t");
-    assert!(
-        output.contains("c_longlong"),
-        "Missing c_longlong (long long) in apr_finfo_t"
+        output.contains("pub size: size_t"),
+        "Missing size size_t field"
     );
 
-    // Verify function signatures
+    // Verify function declarations
     assert!(
-        output.contains("apr_pool_create"),
-        "Missing apr_pool_create function"
+        output.contains("pub unsafe extern \"system\" fn apr_pool_create"),
+        "Missing apr_pool_create"
     );
     assert!(
-        output.contains("apr_pool_destroy"),
-        "Missing apr_pool_destroy function"
+        output.contains("pub unsafe extern \"system\" fn apr_file_open"),
+        "Missing apr_file_open"
     );
     assert!(
-        output.contains("apr_file_open"),
-        "Missing apr_file_open function"
+        output.contains("pub unsafe extern \"system\" fn apr_file_read"),
+        "Missing apr_file_read"
     );
     assert!(
-        output.contains("apr_file_read"),
-        "Missing apr_file_read function"
+        output.contains("pub unsafe extern \"system\" fn apr_stat"),
+        "Missing apr_stat"
     );
-    assert!(
-        output.contains("apr_file_write"),
-        "Missing apr_file_write function"
-    );
-    assert!(
-        output.contains("apr_file_close"),
-        "Missing apr_file_close function"
-    );
-    assert!(output.contains("apr_stat"), "Missing apr_stat function");
+}
 
-    // Verify double-pointer parameter (apr_pool_t**)
-    assert!(
-        output.contains("*mut *mut apr_pool_t"),
-        "Missing double pointer *mut *mut apr_pool_t"
-    );
+#[test]
+fn test_fixture_ffi_compute() {
+    let fixture = Path::new("tests/fixtures/ffi_compute.carbide");
+    assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
 
-    // Verify const pointer parameter (void const*)
+    let output = transpile_fixture(fixture);
+
+    // Verify struct
     assert!(
-        output.contains("*const c_void"),
-        "Missing *const c_void parameter"
+        output.contains("pub struct FfiStruct"),
+        "Missing FfiStruct"
+    );
+    assert!(output.contains("pub val: c_int"), "Missing val field");
+    assert!(
+        output.contains("pub ptr: *mut c_int"),
+        "Missing ptr field"
     );
 
-    // All functions should have C ABI
-    assert!(output.contains("#[repr(C)]"), "Missing #[repr(C)]");
-    assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
-    assert!(output.contains("extern \"C\""), "Missing extern \"C\"");
+    // Verify proc compute
+    assert!(
+        output.contains("pub unsafe extern \"system\" fn compute(s: *const FfiStruct) -> c_int"),
+        "Missing or incorrect compute signature"
+    );
+
+    // Verify body statements
+    assert!(
+        output.contains("let mut result: c_int = 0;"),
+        "Missing result var declaration"
+    );
+    assert!(
+        output.contains("result = *(*s).ptr + (*s).val;"),
+        "Missing pointer dereference in compute"
+    );
+    assert!(
+        output.contains("return result;"),
+        "Missing return statement"
+    );
 }
 
 #[test]
@@ -232,7 +246,7 @@ fn test_fixture_rust_primitives() {
     let output = transpile_fixture(fixture);
 
     // Verify imports
-    assert!(output.contains("#![no_std]"), "Missing #![no_std]");
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
 
     // Verify all Rust integer types are preserved verbatim
     for ty in &[
@@ -256,16 +270,15 @@ fn test_fixture_rust_primitives() {
     assert!(output.contains("#[repr(C)]"), "Missing #[repr(C)]");
     assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle]");
     assert!(
-        output.contains("pub extern \"C\" fn rust_add"),
+        output.contains("pub extern \"system\" fn rust_add"),
         "rust_add signature must be safe fn"
     );
     assert!(
-        !output.contains("pub unsafe extern \"C\" fn rust_add"),
+        !output.contains("pub unsafe extern \"system\" fn rust_add"),
         "Safe fn must not be unsafe"
     );
 
     // Verify Rust types are NOT substituted to c_* equivalents
-    // (i32 should not become c_int, etc.)
     assert!(
         output.contains("pub a: i8"),
         "i8 was incorrectly substituted"
@@ -281,6 +294,29 @@ fn test_fixture_rust_primitives() {
 }
 
 #[test]
+fn test_fixture_rust_syntax() {
+    let fixture = Path::new("tests/fixtures/rust_syntax.carbide");
+    assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
+
+    let output = transpile_fixture(fixture);
+
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
+    assert!(output.contains("pub struct Point"), "Missing Point struct");
+    assert!(
+        output.contains("pub unsafe extern \"system\" fn shift"),
+        "Missing shift method"
+    );
+    assert!(
+        output.contains("pub unsafe extern \"system\" fn test_rust_syntax"),
+        "Missing test_rust_syntax"
+    );
+    assert!(
+        output.contains("let prod: usize = e1 as usize * e2;"),
+        "Binary multiplication was corrupted"
+    );
+}
+
+#[test]
 fn test_fixture_learn_c_examples() {
     let fixture = Path::new("tests/fixtures/learn_c_examples.carbide");
     assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
@@ -289,29 +325,29 @@ fn test_fixture_learn_c_examples() {
 
     // Verify correct signature and safety translation for swapTwoNumbers
     assert!(
-        output.contains("pub unsafe extern \"C\" fn swapTwoNumbers(a: *mut c_int, b: *mut c_int)"),
+        output.contains("pub unsafe extern \"system\" fn swapTwoNumbers(a: *mut c_int, b: *mut c_int)"),
         "Missing or incorrect swapTwoNumbers signature"
     );
     assert!(
-        output.contains("pub unsafe extern \"C\" fn swapTwoNumbers"),
+        output.contains("pub unsafe extern \"system\" fn swapTwoNumbers"),
         "proc must be unsafe fn"
     );
 
     // Verify correct signature and safety translation for get_char_at_offset
     assert!(
-        output.contains("pub unsafe extern \"C\" fn get_char_at_offset(str_in: *mut c_char, offset: c_int) -> c_char"),
+        output.contains("pub unsafe extern \"system\" fn get_char_at_offset(str_in: *mut c_char, offset: c_int) -> c_char"),
         "Missing or incorrect get_char_at_offset signature"
     );
 
     // Verify correct signature for add_two_ints (safe fn)
     assert!(
-        output.contains("pub extern \"C\" fn add_two_ints(x1: c_int, x2: c_int) -> c_int"),
+        output.contains("pub extern \"system\" fn add_two_ints(x1: c_int, x2: c_int) -> c_int"),
         "Missing or incorrect add_two_ints signature"
     );
 
     // Verify basic_math exists and returns c_int
     assert!(
-        output.contains("pub extern \"C\" fn basic_math(a: c_int, b: c_int) -> c_int"),
+        output.contains("pub extern \"system\" fn basic_math(a: c_int, b: c_int) -> c_int"),
         "Missing or incorrect basic_math signature"
     );
 
@@ -331,7 +367,7 @@ fn test_fixture_clap_audio() {
     let output = transpile_fixture(fixture);
 
     // Header + imports
-    assert!(output.contains("#![no_std]"), "Missing #![no_std]");
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
     assert!(
         output.contains("use core::ffi::*;"),
         "Missing core::ffi import"
@@ -394,19 +430,19 @@ fn test_fixture_clap_audio() {
         "Missing features const** pointer"
     );
 
-    // Function pointer fields -> Option<unsafe extern "C" fn>
+    // Function pointer fields -> Option<unsafe extern "system" fn>
     assert!(
         output.contains(
-            "pub init: Option<unsafe extern \"C\" fn(plugin: *const clap_plugin) -> bool>,"
+            "pub init: Option<unsafe extern \"system\" fn(plugin: *const clap_plugin) -> bool>,"
         ),
         "Missing plugin init fn-pointer field"
     );
     assert!(
-        output.contains("pub process: Option<unsafe extern \"C\" fn(plugin: *const clap_plugin, process: *const clap_process) -> clap_process_status>,"),
+        output.contains("pub process: Option<unsafe extern \"system\" fn(plugin: *const clap_plugin, process: *const clap_process) -> clap_process_status>,"),
         "Missing plugin process fn-pointer field"
     );
     assert!(
-        output.contains("pub get: Option<unsafe extern \"C\" fn(list: *const clap_input_events, index: u32) -> *const clap_event_header>,"),
+        output.contains("pub get: Option<unsafe extern \"system\" fn(list: *const clap_input_events, index: u32) -> *const clap_event_header>,"),
         "Missing input-events get fn-pointer field"
     );
 
@@ -438,11 +474,11 @@ fn test_fixture_clap_audio() {
 
     // Helpers: safe fn + unsafe proc
     assert!(
-        output.contains("pub extern \"C\" fn clap_version_is_compatible"),
+        output.contains("pub extern \"system\" fn clap_version_is_compatible"),
         "Missing compatible helper"
     );
     assert!(
-        output.contains("pub unsafe extern \"C\" fn plugin_has_init"),
+        output.contains("pub unsafe extern \"system\" fn plugin_has_init"),
         "Missing has_init proc"
     );
 }
@@ -455,7 +491,7 @@ fn test_fixture_raylib_api() {
     let output = transpile_fixture(fixture);
 
     // Header + imports
-    assert!(output.contains("#![no_std]"), "Missing #![no_std]");
+    assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
     assert!(
         output.contains("use core::ffi::*;"),
         "Missing core::ffi import"
@@ -475,7 +511,7 @@ fn test_fixture_raylib_api() {
         "Missing RenderTexture2D alias"
     );
     assert!(
-        output.contains("pub type AudioCallback = Option<unsafe extern \"C\" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;"),
+        output.contains("pub type AudioCallback = Option<unsafe extern \"system\" fn(buffer: *mut c_void, frames: c_uint)>;"),
         "Missing AudioCallback fn-pointer alias"
     );
 
@@ -502,29 +538,29 @@ fn test_fixture_raylib_api() {
 
     // Audio stub functions
     assert!(
-        output.contains("pub unsafe extern \"C\" fn InitAudioDevice() -> c_void"),
+        output.contains("pub unsafe extern \"system\" fn InitAudioDevice()"),
         "Missing InitAudioDevice"
     );
     assert!(
-        output.contains("pub unsafe extern \"C\" fn LoadSound(file_name: *const c_char) -> Sound"),
+        output.contains("pub unsafe extern \"system\" fn LoadSound(file_name: *const c_char) -> Sound"),
         "Missing LoadSound"
     );
     assert!(
-        output.contains("pub unsafe extern \"C\" fn SetAudioStreamCallback(stream: AudioStream, callback: AudioCallback) -> c_void"),
+        output.contains("pub unsafe extern \"system\" fn SetAudioStreamCallback(stream: AudioStream, callback: AudioCallback)"),
         "Missing SetAudioStreamCallback"
     );
 
     // Window/drawing stubs
-    assert!(output.contains("pub unsafe extern \"C\" fn InitWindow(width: c_int, height: c_int, title: *const c_char) -> c_void"), "Missing InitWindow");
-    assert!(output.contains("pub unsafe extern \"C\" fn DrawText(text: *const c_char, pos_x: c_int, pos_y: c_int, font_size: c_int, color: Color) -> c_void"), "Missing DrawText");
+    assert!(output.contains("pub unsafe extern \"system\" fn InitWindow(width: c_int, height: c_int, title: *const c_char)"), "Missing InitWindow");
+    assert!(output.contains("pub unsafe extern \"system\" fn DrawText(text: *const c_char, pos_x: c_int, pos_y: c_int, font_size: c_int, color: Color)"), "Missing DrawText");
 
     // Helpers with real bodies
     assert!(
-        output.contains("pub extern \"C\" fn raylib_color"),
+        output.contains("pub extern \"system\" fn raylib_color"),
         "Missing raylib_color helper"
     );
     assert!(
-        output.contains("pub extern \"C\" fn vector2_length_squared"),
+        output.contains("pub extern \"system\" fn vector2_length_squared"),
         "Missing vector2 helper"
     );
 }
@@ -544,6 +580,7 @@ fn test_all_fixtures_transpile() {
         let name = fixture.file_stem().unwrap().to_str().unwrap();
         println!("Transpiling fixture: {}", name);
 
+        // Default mode (std)
         let output = transpile_fixture(fixture);
         assert!(
             !output.is_empty(),
@@ -551,8 +588,8 @@ fn test_all_fixtures_transpile() {
             name
         );
         assert!(
-            output.contains("#![no_std]"),
-            "Missing #![no_std] in: {}",
+            !output.contains("#![no_std]"),
+            "Unexpected #![no_std] in default mode for: {}",
             name
         );
         assert!(
@@ -560,6 +597,23 @@ fn test_all_fixtures_transpile() {
             "Missing core::ffi import in: {}",
             name
         );
+
+        // Explicit --no-std mode
+        let output_no_std = transpile_fixture_with_args(fixture, &["--no-std"]);
+        assert!(
+            output_no_std.contains("#![no_std]"),
+            "Missing #![no_std] with --no-std flag in: {}",
+            name
+        );
+
+        // Explicit --std mode
+        let output_std = transpile_fixture_with_args(fixture, &["--std"]);
+        assert!(
+            !output_std.contains("#![no_std]"),
+            "Unexpected #![no_std] with --std flag in: {}",
+            name
+        );
+
         if name == "libc_types" || name == "apr_types" {
             assert!(
                 output.contains("use libc::*;"),

@@ -6,7 +6,7 @@
 //   - stdint types (uint32_t, int16_t, ...) are written as Rust primitives
 //     (u32, i16, ...) and pass through the transpiler unchanged;
 //   - C function pointers are written `fn(params) -> ret` and transpile to
-//     `Option<unsafe extern "C" fn(params) -> ret>` because C callbacks are
+//     `Option<unsafe extern "system" fn(params) -> ret>` because C callbacks are
 //     nullable and calling them is inherently unsafe;
 //   - `type` aliases transpile C typedefs (clap_id, clap_process_status, ...);
 //   - `T const*` postfix pointers transpile to `*const T`.

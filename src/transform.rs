@@ -94,7 +94,7 @@ fn transform_fn(func: &mut Function) {
     // Inject C-ABI attributes and calling convention
     func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
     if func.abi.is_none() {
-        func.abi = Some("C".to_string());
+        func.abi = Some("system".to_string());
     }
 
     // Map parameter types
@@ -182,6 +182,9 @@ pub fn apply_body_transforms(src: &str) -> String {
     // Postfix pointer cast flip: `as WORD*` and `as WORD const*`
     s = flip_as_pointer_casts(&s);
 
+    // Postfix pointer and reference type annotations in body: `: WORD*`, `: WORD&`, etc.
+    s = flip_colon_type_annotations(&s);
+
     s
 }
 
@@ -222,15 +225,32 @@ fn replace_word(src: &str, word: &str, replacement: &str) -> String {
     result
 }
 
-/// Flip `as TYPE*` and `as TYPE const*` postfix pointer casts in source text.
-///
-/// Pattern:  `as <ws> <typename> <ws>? [const <ws>?] *`
-/// Becomes:  `as *[const|mut] <typename>`
-///
-/// Only the C primitive type names (already mapped at this point to their
-/// FFI equivalents) and unrecognised identifiers are matched.
+fn is_modifier_keyword_ahead(bytes: &[u8], pos: usize) -> bool {
+    let len = bytes.len();
+    if pos + 5 <= len && &bytes[pos..pos+5] == b"const" {
+        let after = pos + 5;
+        let mut m = after;
+        while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+        if m < len && (bytes[m] == b'*' || bytes[m] == b'&') {
+            return true;
+        }
+    }
+    if pos + 3 <= len && &bytes[pos..pos+3] == b"mut" {
+        let after = pos + 3;
+        let mut m = after;
+        while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+        if m < len && (bytes[m] == b'*' || bytes[m] == b'&') {
+            return true;
+        }
+    }
+    if pos < len && (bytes[pos] == b'*' || bytes[pos] == b'&') {
+        return true;
+    }
+    false
+}
+
+/// Flip `as TYPE*`, `as TYPE const*`, `as TYPE&`, and `as TYPE const&` postfix casts in source text.
 fn flip_as_pointer_casts(src: &str) -> String {
-    // We scan character by character looking for the pattern `as `.
     let mut result = String::with_capacity(src.len());
     let bytes = src.as_bytes();
     let len   = bytes.len();
@@ -245,19 +265,20 @@ fn flip_as_pointer_casts(src: &str) -> String {
                 (bytes[after_as] == b' ' || bytes[after_as] == b'\t' || bytes[after_as] == b'\n');
 
             if before_ok && after_ok {
-                // Try to parse: `as <ws>* <ident> <ws>* [const <ws>*] *`
                 let mut j = after_as;
                 // Skip whitespace
                 while j < len && bytes[j].is_ascii_whitespace() { j += 1; }
-                // Read typename identifier(s)
+                // Read typename identifier(s) (including :: and multi-word types)
                 let type_start = j;
-                while j < len && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b' ') {
-                    // Allow a single space within multi-word types like `c_void`
-                    // but stop at `*` or non-word chars
+                while j < len && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b':' || bytes[j] == b' ') {
                     if bytes[j] == b' ' {
-                        // peek ahead: is the next char alphanumeric? (multi-word type)
-                        if j + 1 < len && (bytes[j+1].is_ascii_alphanumeric() || bytes[j+1] == b'_') {
-                            j += 1;
+                        let mut next_w = j + 1;
+                        while next_w < len && bytes[next_w].is_ascii_whitespace() { next_w += 1; }
+                        if is_modifier_keyword_ahead(bytes, next_w) {
+                            break;
+                        }
+                        if next_w < len && (bytes[next_w].is_ascii_alphanumeric() || bytes[next_w] == b'_') {
+                            j = next_w;
                             continue;
                         } else {
                             break;
@@ -267,27 +288,245 @@ fn flip_as_pointer_casts(src: &str) -> String {
                 }
                 let type_name = std::str::from_utf8(&bytes[type_start..j]).unwrap_or("").trim();
 
-                // Skip whitespace
+                if !type_name.is_empty() {
+                    // Try parsing one or more pointer/reference modifiers
+                    let mut modifiers = Vec::new();
+                    let mut scan_pos = j;
+
+                    let mut k = scan_pos;
+                    while k < len && bytes[k].is_ascii_whitespace() {
+                        k += 1;
+                    }
+
+                    while k < len {
+                        // Check for optional `const`
+                        if k + 5 <= len && &bytes[k..k+5] == b"const" {
+                            let after_const = k + 5;
+                            let const_boundary = after_const >= len ||
+                                bytes[after_const].is_ascii_whitespace() || bytes[after_const] == b'*' || bytes[after_const] == b'&';
+                            if const_boundary {
+                                let mut m = after_const;
+                                while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+                                if m < len && bytes[m] == b'*' {
+                                    modifiers.push(Modifier::ConstPtr);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                } else if m < len && bytes[m] == b'&' {
+                                    modifiers.push(Modifier::ConstRef);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                }
+                            }
+                        } else if k + 3 <= len && &bytes[k..k+3] == b"mut" {
+                            let after_mut = k + 3;
+                            let mut_boundary = after_mut >= len ||
+                                bytes[after_mut].is_ascii_whitespace() || bytes[after_mut] == b'*' || bytes[after_mut] == b'&';
+                            if mut_boundary {
+                                let mut m = after_mut;
+                                while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+                                if m < len && bytes[m] == b'*' {
+                                    modifiers.push(Modifier::MutPtr);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                } else if m < len && bytes[m] == b'&' {
+                                    modifiers.push(Modifier::MutRef);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                }
+                            }
+                        } else if bytes[k] == b'*' {
+                            modifiers.push(Modifier::MutPtr);
+                            k += 1;
+                            scan_pos = k;
+                            while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                            continue;
+                        } else if bytes[k] == b'&' {
+                            modifiers.push(Modifier::MutRef);
+                            k += 1;
+                            scan_pos = k;
+                            while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                            continue;
+                        }
+                        break;
+                    }
+
+                    if !modifiers.is_empty() {
+                        // Look at the character immediately after modifiers (skipping whitespace)
+                        // If it is followed by an expression operand, then `*` was binary multiplication!
+                        let is_multiplication = if k < len {
+                            let next_c = bytes[k] as char;
+                            let is_operand_start = next_c.is_alphabetic() || next_c == '_' || next_c.is_numeric() ||
+                                next_c == '"' || next_c == '\'' || next_c == '(' || next_c == '[';
+                            is_operand_start && (modifiers.len() == 1 && matches!(modifiers[0], Modifier::MutPtr))
+                        } else {
+                            false
+                        };
+
+                        if !is_multiplication {
+                            let mut ptr_prefix = String::new();
+                            for m in modifiers.iter().rev() {
+                                match m {
+                                    Modifier::ConstPtr => ptr_prefix.push_str("*const "),
+                                    Modifier::MutPtr => ptr_prefix.push_str("*mut "),
+                                    Modifier::ConstRef => ptr_prefix.push_str("&"),
+                                    Modifier::MutRef => ptr_prefix.push_str("&mut "),
+                                }
+                            }
+                            result.push_str(&format!("as {}{}", ptr_prefix, type_name));
+                            i = scan_pos;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+
+    result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Modifier {
+    MutPtr,
+    ConstPtr,
+    MutRef,
+    ConstRef,
+}
+
+/// Flip postfix pointer and reference type annotations in source text (e.g. `let x: int* = ...` or `let r: int& = ...`).
+fn flip_colon_type_annotations(src: &str) -> String {
+    let mut result = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let len   = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b':' {
+            let is_double_colon = (i > 0 && bytes[i-1] == b':') || (i + 1 < len && bytes[i+1] == b':');
+            if !is_double_colon {
+                let mut j = i + 1;
                 while j < len && bytes[j].is_ascii_whitespace() { j += 1; }
 
-                // Optional `const`
-                let is_const = if j + 5 <= len && &bytes[j..j+5] == b"const" {
-                    let after_const = j + 5;
-                    let ok = after_const >= len ||
-                        bytes[after_const].is_ascii_whitespace() || bytes[after_const] == b'*';
-                    if ok { j = after_const; while j < len && bytes[j].is_ascii_whitespace() { j += 1; } true }
-                    else { false }
-                } else { false };
-
-                // Must be followed by `*`
-                if j < len && bytes[j] == b'*' && !type_name.is_empty() {
-                    j += 1; // consume `*`
-                    let ptr_kind = if is_const { "*const" } else { "*mut" };
-                    result.push_str(&format!("as {} {}", ptr_kind, type_name));
-                    i = j;
-                    continue;
+                let type_start = j;
+                while j < len && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b':' || bytes[j] == b' ') {
+                    if bytes[j] == b' ' {
+                        let mut next_w = j + 1;
+                        while next_w < len && bytes[next_w].is_ascii_whitespace() { next_w += 1; }
+                        if is_modifier_keyword_ahead(bytes, next_w) {
+                            break;
+                        }
+                        if next_w < len && (bytes[next_w].is_ascii_alphanumeric() || bytes[next_w] == b'_') {
+                            j = next_w;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    j += 1;
                 }
-                // Pattern didn't match — emit `as` literally and move on
+                let type_name = std::str::from_utf8(&bytes[type_start..j]).unwrap_or("").trim();
+
+                if !type_name.is_empty() {
+                    let mut modifiers = Vec::new();
+                    let mut scan_pos = j;
+
+                    let mut k = scan_pos;
+                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+
+                    while k < len {
+                        if k + 5 <= len && &bytes[k..k+5] == b"const" {
+                            let after_const = k + 5;
+                            let const_boundary = after_const >= len ||
+                                bytes[after_const].is_ascii_whitespace() || bytes[after_const] == b'*' || bytes[after_const] == b'&';
+                            if const_boundary {
+                                let mut m = after_const;
+                                while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+                                if m < len && bytes[m] == b'*' {
+                                    modifiers.push(Modifier::ConstPtr);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                } else if m < len && bytes[m] == b'&' {
+                                    modifiers.push(Modifier::ConstRef);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                }
+                            }
+                        } else if k + 3 <= len && &bytes[k..k+3] == b"mut" {
+                            let after_mut = k + 3;
+                            let mut_boundary = after_mut >= len ||
+                                bytes[after_mut].is_ascii_whitespace() || bytes[after_mut] == b'*' || bytes[after_mut] == b'&';
+                            if mut_boundary {
+                                let mut m = after_mut;
+                                while m < len && bytes[m].is_ascii_whitespace() { m += 1; }
+                                if m < len && bytes[m] == b'*' {
+                                    modifiers.push(Modifier::MutPtr);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                } else if m < len && bytes[m] == b'&' {
+                                    modifiers.push(Modifier::MutRef);
+                                    k = m + 1;
+                                    scan_pos = k;
+                                    while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                                    continue;
+                                }
+                            }
+                        } else if bytes[k] == b'*' {
+                            modifiers.push(Modifier::MutPtr);
+                            k += 1;
+                            scan_pos = k;
+                            while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                            continue;
+                        } else if bytes[k] == b'&' {
+                            modifiers.push(Modifier::MutRef);
+                            k += 1;
+                            scan_pos = k;
+                            while k < len && bytes[k].is_ascii_whitespace() { k += 1; }
+                            continue;
+                        }
+                        break;
+                    }
+
+                    if !modifiers.is_empty() {
+                        let is_valid_type_term = if k < len {
+                            let next_c = bytes[k] as char;
+                            next_c == '=' || next_c == ';' || next_c == ',' || next_c == ')' || next_c == ']' || next_c == '}' || next_c == '\n'
+                        } else {
+                            true
+                        };
+
+                        if is_valid_type_term {
+                            let mut ptr_prefix = String::new();
+                            for m in modifiers.iter().rev() {
+                                match m {
+                                    Modifier::ConstPtr => ptr_prefix.push_str("*const "),
+                                    Modifier::MutPtr => ptr_prefix.push_str("*mut "),
+                                    Modifier::ConstRef => ptr_prefix.push_str("&"),
+                                    Modifier::MutRef => ptr_prefix.push_str("&mut "),
+                                }
+                            }
+                            result.push_str(&format!(": {}{}", ptr_prefix, type_name));
+                            i = scan_pos;
+                            continue;
+                        }
+                    }
+                }
             }
         }
 
@@ -337,16 +576,16 @@ mod tests {
     fn test_transform_fn_remains_safe() {
         let src = "fn safe(x: int) -> int { return x; }";
         let out = transpile(src);
-        assert!(out.contains("extern \"C\""), "missing extern C");
+        assert!(out.contains("extern \"system\""), "missing extern system");
         assert!(!out.contains("unsafe"), "fn should not be unsafe");
     }
 
     #[test]
-    fn test_transform_c_abi_and_repr() {
+    fn test_transform_system_abi_and_repr() {
         let src = "proc go(p: void*) -> void { *p = 0; }";
         let out = transpile(src);
         assert!(out.contains("unsafe"), "proc should be unsafe");
-        assert!(out.contains("extern \"C\""), "missing extern C");
+        assert!(out.contains("extern \"system\""), "missing extern system");
     }
 
     #[test]
@@ -363,5 +602,20 @@ mod tests {
         assert!(out.contains("c_int"), "int should become c_int");
         assert!(out.contains("c_void"), "void should become c_void");
         assert!(out.contains("as *mut c_void"), "postfix pointer cast should flip");
+    }
+
+    #[test]
+    fn test_binary_multiplication_not_flipped() {
+        let src = "let res = e1 as usize * e2;";
+        let out = apply_body_transforms(src);
+        assert_eq!(out, "let res = e1 as usize * e2;");
+
+        let src2 = "let total = a as int * 5;";
+        let out2 = apply_body_transforms(src2);
+        assert_eq!(out2, "let total = a as c_int * 5;");
+
+        let src3 = "let total2 = a as i32 * 5;";
+        let out3 = apply_body_transforms(src3);
+        assert_eq!(out3, "let total2 = a as i32 * 5;");
     }
 }

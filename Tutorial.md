@@ -1,8 +1,8 @@
 # Learn Carbide in Y Minutes
 
-Ah, Carbide. The language of modern high-performance FFI and C-style Rust systems programming.
+Ah, Carbide. The language of modern high-performance FFI and C/C++-style Rust systems programming.
 
-Carbide is a low-level dialect of Rust designed to merge C-style types and pointer semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C pointer notation combined with the structure and compiler benefits of Rust, prefixing files with `#![no_std]` and managing memory layouts automatically.
+Carbide is a low-level dialect of Rust designed to merge C/C++-style types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`.
 
 Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
 
@@ -18,10 +18,8 @@ Multi-line comments look like this.
 fn add_two_ints(x1: int, x2: int) -> int; // Function prototype
 
 // Your entry point can be a function called "main".
-// Carbide will output it as a public extern "C" function with #[no_mangle].
+// Carbide will output it as a public extern "system" function with #[no_mangle].
 fn main() -> int {
-    // print output using printf-like external declarations or bindings
-    
     ///////////////////////////////////////
     // Types
     ///////////////////////////////////////
@@ -57,7 +55,6 @@ fn main() -> int {
     let mut size: size_t = 0;
 
     // String literals are represented using standard Rust double quotes.
-    // In Carbide, they are raw strings:
     let mut a_string: char const* = "This is a string";
 
     ///////////////////////////////////////
@@ -82,34 +79,38 @@ fn main() -> int {
     // Control Structures
     ///////////////////////////////////////
 
-    // If/Else statements:
+    // Any standard Rust control flow works inside bodies:
     if x_int == 0 {
         x_int = 10;
     } else {
         x_int = 20;
     }
 
-    // NOTE: Carbide does not define loops (like while, for, do-while) in its AST.
-    // Instead, repetitive FFI tasks are written recursively or offloaded to Rust bindings.
-
     ///////////////////////////////////////
-    // Pointers
+    // Pointers & References (C/C++ Conventions Exclusively)
     ///////////////////////////////////////
 
-    // A pointer is declared with a postfix star `*`:
-    let mut x: int = 0;
-    let mut px: int* = &mut x; // Retrieve address of x
+    // Pointers are declared with postfix `*` (or `mut*` / `const*`):
+    let mut x: int = 42;
+    let mut px: int* = &mut x; // Transpiles to `*mut c_int`
+    let pcx: int const* = &x;   // Transpiles to `*const c_int`
 
-    // Dereferencing a pointer uses the prefix `*` operator:
-    let mut val: int = *px; // => 0 (the value of x)
+    // References / borrows use postfix `&` (or `mut&` / `const&`):
+    let r_mut: int& = &mut x;       // Transpiles to `&mut c_int`
+    let r_const: int const& = &x;   // Transpiles to `&c_int`
 
-    // You can also change the value the pointer is pointing to:
+    // Dereferencing uses the prefix `*` operator:
+    let mut val: int = *px; // => 42
+
     *px = 5; // x is now 5
 
     // Pointer Arithmetic:
-    // Raw pointer offsets in Carbide use the standard Rust .offset() method,
-    // which compiles cleanly within implicit unsafe blocks:
     let mut px_offset: int* = px.offset(1);
+
+    // Expressions: binary multiplication following type cast is preserved:
+    let e1: u32 = 10;
+    let e2: usize = 20;
+    let product: usize = e1 as usize * e2;
 
     return 0;
 }
@@ -118,32 +119,39 @@ fn main() -> int {
 // Functions (fn) & Procedures (proc)
 ///////////////////////////////////////
 
-// Carbide has two keyword types for FFI code generation:
+// Carbide provides two keyword types for FFI code generation:
 
 // 1. safe fn: Safe by default
-// - Transpiles to safe Rust `pub extern "C" fn`.
-// - Body is parsed in safe Rust scope (no implicit unsafe block wrapper).
+// - Transpiles to safe Rust `pub extern "system" fn`.
+// - Body is in safe Rust scope.
 fn add_two_ints(x1: int, x2: int) -> int {
     return x1 + x2;
 }
 
 // 2. unsafe proc: Unsafe by default
-// - Transpiles to `pub unsafe extern "C" fn`.
-// - Body is automatically wrapped in an implicit `unsafe {}` block,
-//   allowing pointer dereferences and offsets without manual wrapping.
+// - Transpiles to `pub unsafe extern "system" fn`.
+// - Functions returning `void` omit the Rust return type arrow (unit `()`).
+// - Body is automatically wrapped in an implicit `unsafe {}` block.
 proc swapTwoNumbers(a: int*, b: int*) -> void {
     let temp: int = *a;
     *a = *b;
     *b = temp;
 }
 
-// 3. Explicit unsafe fn: Works like proc (unsafe by default)
+// 3. Explicit unsafe fn: Works like proc
 unsafe fn read_value(ptr: int*) -> int {
     return *ptr;
 }
 
 ///////////////////////////////////////
-// Structs & memory layout
+// Function Pointers & Callbacks
+///////////////////////////////////////
+
+// C/system callbacks in type position transpile to `Option<unsafe extern "system" fn(...)>`:
+type AudioCallback = fn(buffer: void*, frames: uint) -> void;
+
+///////////////////////////////////////
+// Structs & Memory Layout
 ///////////////////////////////////////
 
 // Every struct definition is automatically prepended with #[repr(C)],
@@ -151,5 +159,16 @@ unsafe fn read_value(ptr: int*) -> int {
 struct Point {
     x: float,
     y: float
+}
+
+impl Point {
+    fn new(x: float, y: float) -> Point {
+        return Point { x, y };
+    }
+
+    proc shift(self: Point&, dx: float, dy: float) -> void {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
 }
 ```

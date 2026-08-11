@@ -11,15 +11,31 @@ use crate::ast::*;
 pub struct Emitter {
     output: String,
     indent_level: usize,
+    no_std: bool,
 }
 
 impl Emitter {
-    /// Create a new Emitter.
+    /// Create a new Emitter in standard library mode (does not emit `#![no_std]`).
     pub fn new() -> Self {
         Self {
             output: String::new(),
             indent_level: 0,
+            no_std: false,
         }
+    }
+
+    /// Create a new Emitter with an explicit `no_std` configuration.
+    pub fn with_no_std(no_std: bool) -> Self {
+        Self {
+            output: String::new(),
+            indent_level: 0,
+            no_std,
+        }
+    }
+
+    /// Enable or disable `#![no_std]` emission.
+    pub fn set_no_std(&mut self, no_std: bool) {
+        self.no_std = no_std;
     }
 
     /// Retrieve the final emitted source.
@@ -45,7 +61,7 @@ impl Emitter {
     // Program
     // -------------------------------------------------------------------------
 
-    /// Emit a complete program, prepending `#![no_std]` and the required
+    /// Emit a complete program, prepending `#![no_std]` (if configured) and the required
     /// `use` imports.
     pub fn emit_program(&mut self, program: &Program) {
         // Emit items to a temporary buffer so we can scan for libc types
@@ -67,7 +83,9 @@ impl Emitter {
         ];
         let needs_libc = libc_types.iter().any(|t| items_src.contains(t));
 
-        self.output.push_str("#![no_std]\n");
+        if self.no_std {
+            self.output.push_str("#![no_std]\n");
+        }
         // FFI bindings carry C-style names (snake_case types, SCREAMING
         // constants) - silence the style lints that would otherwise fire on
         // every generated binding (same hygiene as bindgen output).
@@ -189,8 +207,10 @@ impl Emitter {
         self.output.push(')');
 
         if let Some(ref ret) = f.ret_type {
-            self.output.push_str(" -> ");
-            self.emit_type(ret);
+            if !is_void_type(ret) {
+                self.output.push_str(" -> ");
+                self.emit_type(ret);
+            }
         }
 
         // Emit the body verbatim between `{` and `}`.
@@ -237,9 +257,9 @@ impl Emitter {
                 self.output.push_str(&format!("; {}]", len));
             }
             Type::FnPointer { params, ret } => {
-                // C function pointers are nullable → Option<…> with the
-                // pointer-null optimisation, and calling into C is unsafe.
-                self.output.push_str("Option<unsafe extern \"C\" fn(");
+                // Function pointers are nullable → Option<…> with the
+                // pointer-null optimisation, and calling into C / system is unsafe.
+                self.output.push_str("Option<unsafe extern \"system\" fn(");
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
@@ -249,12 +269,23 @@ impl Emitter {
                 }
                 self.output.push(')');
                 if let Some(ret) = ret {
-                    self.output.push_str(" -> ");
-                    self.emit_type(ret);
+                    if !is_void_type(ret) {
+                        self.output.push_str(" -> ");
+                        self.emit_type(ret);
+                    }
                 }
                 self.output.push('>');
             }
         }
+    }
+}
+
+/// Check if a type represents the `void` / unit return type.
+fn is_void_type(ty: &Type) -> bool {
+    match ty {
+        Type::UserDefined(name) => name == "void" || name == "c_void" || name == "()",
+        Type::Primitive(PrimitiveType::RustPrimitive(name)) => name == "()",
+        _ => false,
     }
 }
 
@@ -278,6 +309,15 @@ mod tests {
         emitter.finish()
     }
 
+    fn transpile_no_std(src: &str) -> String {
+        let tokens = Lexer::new(src).tokenize_with_positions().unwrap();
+        let mut program = Parser::new(src, tokens).parse_program().unwrap();
+        transform_program(&mut program);
+        let mut emitter = Emitter::with_no_std(true);
+        emitter.emit_program(&program);
+        emitter.finish()
+    }
+
     #[test]
     fn test_emitter_output() {
         let src = r#"
@@ -292,7 +332,8 @@ mod tests {
         "#;
         let output = transpile(src);
 
-        assert!(output.contains("#![no_std]"), "Missing no_std");
+        // By default, standard library mode is used (no #![no_std])
+        assert!(!output.contains("#![no_std]"), "Unexpected no_std in default mode");
         assert!(output.contains("use core::ffi::*;"), "Missing ffi import");
         assert!(!output.contains("use libc::*;"), "Unexpected libc import");
         assert!(output.contains("#[repr(C)]"), "Missing repr(C)");
@@ -304,11 +345,15 @@ mod tests {
         );
         assert!(output.contains("#[no_mangle]"), "Missing no_mangle");
         assert!(
-            output.contains("pub unsafe extern \"C\" fn add(p: *const Point) -> c_int"),
-            "Wrong function signature"
+            output.contains("pub unsafe extern \"system\" fn add(p: *const Point) -> c_int"),
+            "Wrong function signature: {output}"
         );
         // Body is emitted verbatim — user's formatting preserved
         assert!(output.contains("return (*p).x;"), "Body not preserved");
+
+        // With no_std enabled:
+        let output_no_std = transpile_no_std(src);
+        assert!(output_no_std.contains("#![no_std]"), "Missing no_std in no_std mode");
     }
 
     #[test]
@@ -323,22 +368,22 @@ mod tests {
         "#;
         let output = transpile(src);
 
-        // Type alias: C fn-pointer typedef → Option<unsafe extern "C" fn>
+        // Type alias: C fn-pointer typedef → Option<unsafe extern "system" fn>
         assert!(
-            output.contains("pub type AudioCallback = Option<unsafe extern \"C\" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;"),
+            output.contains("pub type AudioCallback = Option<unsafe extern \"system\" fn(buffer: *mut c_void, frames: c_uint)>;"),
             "Wrong AudioCallback alias: {output}"
         );
 
-        // Struct fn-pointer fields: nullable + C ABI
+        // Struct fn-pointer fields: nullable + system ABI + void return omitted
         assert!(
             output.contains(
-                "pub init: Option<unsafe extern \"C\" fn(plugin: *const Plugin) -> bool>,"
+                "pub init: Option<unsafe extern \"system\" fn(plugin: *const Plugin) -> bool>,"
             ),
             "Wrong init field: {output}"
         );
         assert!(
             output.contains(
-                "pub destroy: Option<unsafe extern \"C\" fn(plugin: *const Plugin) -> c_void>,"
+                "pub destroy: Option<unsafe extern \"system\" fn(plugin: *const Plugin)>,"
             ),
             "Wrong destroy field: {output}"
         );

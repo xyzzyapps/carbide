@@ -32,6 +32,14 @@ pub struct Cli {
     /// Run rustc programmatically on the transpiled output.
     #[arg(short, long)]
     pub compile: bool,
+
+    /// Emit `#![no_std]` at the top of generated Rust files (default is standard library mode).
+    #[arg(long = "no-std", conflicts_with = "std")]
+    pub no_std: bool,
+
+    /// Target standard library mode (default, omits `#![no_std]`).
+    #[arg(long = "std", conflicts_with = "no_std")]
+    pub std: bool,
 }
 
 /// Available subcommands for carbide.
@@ -90,7 +98,7 @@ fn main() {
 
         transform::transform_program(&mut program);
 
-        let mut emitter = emitter::Emitter::new();
+        let mut emitter = emitter::Emitter::with_no_std(cli.no_std);
         emitter.emit_program(&program);
         let generated_code = emitter.finish();
 
@@ -139,6 +147,7 @@ fn main() {
             }
         };
 
+        let no_std_flag = args.iter().any(|a| a == "--no-std");
         println!("Carbide Cargo subcommand starting. Args: {:?}", args);
         
         let current_dir = std::env::current_dir().expect("Failed to get current directory");
@@ -194,7 +203,7 @@ fn main() {
                             std::process::exit(1);
                         });
                         transform::transform_program(&mut program);
-                        let mut emitter = emitter::Emitter::new();
+                        let mut emitter = emitter::Emitter::with_no_std(no_std_flag);
                         emitter.emit_program(&program);
                         let generated = emitter.finish();
                         
@@ -216,7 +225,7 @@ fn main() {
         
         // Append optional flags from the subcommand arguments
         for arg in args {
-            if arg != "build" {
+            if arg != "build" && arg != "--no-std" && arg != "--std" {
                 cargo_args.push(arg.clone());
             }
         }

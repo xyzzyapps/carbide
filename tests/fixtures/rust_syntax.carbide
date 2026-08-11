@@ -14,9 +14,9 @@ impl Point {
         return Point { x, y };
     }
 
-    proc shift(self: Point*, dx: int, dy: int) -> void {
-        (*self).x = (*self).x + dx;
-        (*self).y = (*self).y + dy;
+    proc shift(self: Point&, dx: int, dy: int) -> void {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
     }
 }
 
@@ -54,9 +54,26 @@ proc test_rust_syntax() -> int {
     sum = sum + arr[1];
 
     // Type casting
-    let raw_ptr: void* = &mut sum as void*;
+    let raw_ptr: void* = (&mut sum as int*) as void*;
     let int_ptr: int* = raw_ptr as int*;
     *int_ptr = *int_ptr + 5;
+
+    // Postfix references
+    let mut val: int = 42;
+    let r_mut: int& = &mut val;
+    *r_mut = *r_mut + 1;
+    let r_const: int const& = &val;
+    sum = sum + *r_const;
+    let r_mut2: int mut& = &mut val;
+    *r_mut2 = *r_mut2 + 1;
+    let p_mut2: int mut* = &mut val;
+    *p_mut2 = *p_mut2 + 1;
+
+    // Binary multiplication following type cast
+    let e1: u32 = 10;
+    let e2: usize = 20;
+    let prod: usize = e1 as usize * e2;
+    sum = sum + prod as int;
 
     return sum;
 }

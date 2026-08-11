@@ -491,7 +491,9 @@ impl<'s> Parser<'s> {
     ///
     /// Supports:
     /// - `[T; N]`          — array
-    /// - `&[mut] T`        — reference
+    /// - `&[mut] T`        — prefix reference
+    /// - `T&`              — mutable reference (postfix)
+    /// - `T const&`        — const reference (postfix)
     /// - `T*`              — mutable pointer (postfix)
     /// - `T const*`        — const pointer (postfix)
     /// - `int`, `void`, …  — C primitive keywords
@@ -500,7 +502,7 @@ impl<'s> Parser<'s> {
     pub fn parse_type(&mut self) -> Result<Type, String> {
         let mut ty = self.parse_base_type()?;
 
-        // Postfix `*` / `const *` modifiers
+        // Postfix pointer (`*`, `const*`, `mut*`) and reference (`&`, `const&`, `mut&`) modifiers
         loop {
             match self.peek() {
                 Some(Token::Star) => {
@@ -510,14 +512,62 @@ impl<'s> Parser<'s> {
                         is_const: false,
                     };
                 }
+                Some(Token::Ampersand) => {
+                    self.next_token();
+                    ty = Type::Reference {
+                        base: Box::new(ty),
+                        is_mut: true,
+                    };
+                }
+                Some(Token::Mut) => {
+                    self.next_token();
+                    match self.peek() {
+                        Some(Token::Star) => {
+                            self.next_token();
+                            ty = Type::Pointer {
+                                base: Box::new(ty),
+                                is_const: false,
+                            };
+                        }
+                        Some(Token::Ampersand) => {
+                            self.next_token();
+                            ty = Type::Reference {
+                                base: Box::new(ty),
+                                is_mut: true,
+                            };
+                        }
+                        other => {
+                            return Err(format!(
+                                "Expected '*' or '&' after 'mut', found {:?}",
+                                other
+                            ));
+                        }
+                    }
+                }
                 Some(Token::Const) => {
                     self.next_token();
-                    self.expect(Token::Star)?;
-                    // const* wraps the *current* ty, then we loop again for `**`
-                    ty = Type::Pointer {
-                        base: Box::new(ty),
-                        is_const: true,
-                    };
+                    match self.peek() {
+                        Some(Token::Star) => {
+                            self.next_token();
+                            ty = Type::Pointer {
+                                base: Box::new(ty),
+                                is_const: true,
+                            };
+                        }
+                        Some(Token::Ampersand) => {
+                            self.next_token();
+                            ty = Type::Reference {
+                                base: Box::new(ty),
+                                is_mut: false,
+                            };
+                        }
+                        other => {
+                            return Err(format!(
+                                "Expected '*' or '&' after 'const', found {:?}",
+                                other
+                            ));
+                        }
+                    }
                 }
                 _ => break,
             }
@@ -543,20 +593,9 @@ impl<'s> Parser<'s> {
                     len,
                 });
             }
-            // `&[mut] T` reference
+            // Disallow Rust prefix reference syntax (`&T`, `&mut T`)
             Some(Token::Ampersand) => {
-                self.next_token();
-                let is_mut = if let Some(Token::Mut) = self.peek() {
-                    self.next_token();
-                    true
-                } else {
-                    false
-                };
-                let inner = self.parse_type()?;
-                return Ok(Type::Reference {
-                    base: Box::new(inner),
-                    is_mut,
-                });
+                return Err("Prefix reference syntax ('&T' / '&mut T') is not allowed in Carbide; use C++-style postfix reference syntax ('T&' / 'T const&' / 'T mut&') instead".to_string());
             }
             // C primitive keywords
             Some(Token::Void) => {
@@ -596,7 +635,7 @@ impl<'s> Parser<'s> {
                 return Ok(Type::UserDefined("char".to_string()));
             }
             // `fn(param: Type, …) -> Ret` function pointer type (C callback).
-            // Emitted as `Option<unsafe extern "C" fn(…) -> Ret>`; the parser
+            // Emitted as `Option<unsafe extern "system" fn(…) -> Ret>`; the parser
             // consumes the full parenthesised parameter list and the arrow
             // return type before returning.
             Some(Token::Fn) => {
@@ -630,23 +669,9 @@ impl<'s> Parser<'s> {
                 };
                 return Ok(Type::FnPointer { params, ret });
             }
-            // `*mut T` / `*const T` (Rust-prefix form already written in source)
+            // Disallow Rust prefix pointer syntax (`*mut T`, `*const T`)
             Some(Token::Star) => {
-                self.next_token();
-                let is_const = if let Some(Token::Const) = self.peek() {
-                    self.next_token();
-                    true
-                } else if let Some(Token::Mut) = self.peek() {
-                    self.next_token();
-                    false
-                } else {
-                    false
-                };
-                let inner = self.parse_type()?;
-                return Ok(Type::Pointer {
-                    base: Box::new(inner),
-                    is_const,
-                });
+                return Err("Prefix pointer syntax ('*mut T' / '*const T') is not allowed in Carbide; use C++-style postfix pointer syntax ('T*' / 'T const*' / 'T mut*') instead".to_string());
             }
             Some(Token::Ident(_)) => {}
             Some(other) => return Err(format!("Expected type, found {:?}", other)),
@@ -970,5 +995,48 @@ mod tests {
         } else {
             panic!("Expected TypeAlias item, got {:?}", prog.items[0]);
         }
+    }
+
+    #[test]
+    fn test_parse_postfix_references() {
+        let src = r#"
+            struct RefStruct {
+                a: int&,
+                b: int const&,
+                c: int mut&,
+                d: int mut*,
+                e: int const*
+            }
+        "#;
+        let prog = parse(src);
+        if let Item::Struct(s) = &prog.items[0] {
+            assert_eq!(s.fields.len(), 5);
+            assert!(matches!(s.fields[0].ty, Type::Reference { is_mut: true, .. }));
+            assert!(matches!(s.fields[1].ty, Type::Reference { is_mut: false, .. }));
+            assert!(matches!(s.fields[2].ty, Type::Reference { is_mut: true, .. }));
+            assert!(matches!(s.fields[3].ty, Type::Pointer { is_const: false, .. }));
+            assert!(matches!(s.fields[4].ty, Type::Pointer { is_const: true, .. }));
+        } else {
+            panic!("Expected Struct");
+        }
+    }
+
+    #[test]
+    fn test_reject_prefix_pointers_and_references() {
+        let src_ref = "struct S { a: &int }";
+        let tokens = Lexer::new(src_ref).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_ref, tokens).parse_program().is_err());
+
+        let src_mut_ref = "struct S { a: &mut int }";
+        let tokens = Lexer::new(src_mut_ref).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_mut_ref, tokens).parse_program().is_err());
+
+        let src_ptr = "struct S { a: *const int }";
+        let tokens = Lexer::new(src_ptr).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_ptr, tokens).parse_program().is_err());
+
+        let src_mut_ptr = "struct S { a: *mut int }";
+        let tokens = Lexer::new(src_mut_ptr).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_mut_ptr, tokens).parse_program().is_err());
     }
 }

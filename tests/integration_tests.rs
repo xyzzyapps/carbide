@@ -15,7 +15,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 /// Transpile `fixture` with the carbide binary and compile the generated
 /// Rust with rustc as a library. Panics on any failure, printing the
 /// compiler diagnostics.
-fn transpile_and_compile(fixture: &Path, expected_snippets: &[&str]) {
+fn transpile_and_compile_with_args(fixture: &Path, expected_snippets: &[&str], args: &[&str]) {
     assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
 
     let carbide_bin = Path::new("target").join("debug").join("carbide.exe");
@@ -25,12 +25,12 @@ fn transpile_and_compile(fixture: &Path, expected_snippets: &[&str]) {
     let lib_out = format!("libintegration_{}_{}.rlib", stem, id);
 
     // 1. Invoke our carbide transpiler binary on the fixture file
-    let status = Command::new(&carbide_bin)
-        .arg(fixture)
-        .arg("-o")
-        .arg(&rs_file)
-        .status()
-        .expect("Failed to run carbide binary");
+    let mut cmd = Command::new(&carbide_bin);
+    cmd.arg(fixture).arg("-o").arg(&rs_file);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    let status = cmd.status().expect("Failed to run carbide binary");
 
     assert!(
         status.success(),
@@ -40,7 +40,12 @@ fn transpile_and_compile(fixture: &Path, expected_snippets: &[&str]) {
 
     // 2. Verify transpiled file contents
     let transpiled_code = fs::read_to_string(&rs_file).expect("Failed to read transpiled rs file");
-    assert!(transpiled_code.contains("#![no_std]"), "Missing #![no_std]");
+    let expects_no_std = args.contains(&"--no-std");
+    if expects_no_std {
+        assert!(transpiled_code.contains("#![no_std]"), "Missing #![no_std] in no_std mode");
+    } else {
+        assert!(!transpiled_code.contains("#![no_std]"), "Unexpected #![no_std] in default mode");
+    }
     assert!(
         transpiled_code.contains("use core::ffi::*;"),
         "Missing core::ffi import"
@@ -74,6 +79,10 @@ fn transpile_and_compile(fixture: &Path, expected_snippets: &[&str]) {
     let _ = fs::remove_file(&lib_out);
 }
 
+fn transpile_and_compile(fixture: &Path, expected_snippets: &[&str]) {
+    transpile_and_compile_with_args(fixture, expected_snippets, &[]);
+}
+
 #[test]
 fn test_integration_transpile_and_compile() {
     transpile_and_compile(
@@ -84,7 +93,7 @@ fn test_integration_transpile_and_compile() {
             "pub val: c_int",
             "pub ptr: *mut c_int",
             "#[no_mangle]",
-            "pub unsafe extern \"C\" fn compute(s: *const FfiStruct) -> c_int",
+            "pub unsafe extern \"system\" fn compute(s: *const FfiStruct) -> c_int",
         ],
     );
 }
@@ -100,15 +109,15 @@ fn test_integration_clap_audio_compiles() {
             // Version constants keep their semicolons
             "const CLAP_VERSION_MAJOR: u32 = 1;",
             // Function pointer fields → nullable C fn pointers
-            "pub init: Option<unsafe extern \"C\" fn(plugin: *const clap_plugin) -> bool>,",
+            "pub init: Option<unsafe extern \"system\" fn(plugin: *const clap_plugin) -> bool>,",
             // Nested const pointer
             "pub features: *const *const c_char,",
             // Entry point static with struct literal
             "pub static clap_entry: clap_plugin_entry = clap_plugin_entry {",
             "    get_factory: None\n};",
             // Helpers
-            "pub extern \"C\" fn clap_version_is_compatible",
-            "pub unsafe extern \"C\" fn plugin_has_init",
+            "pub extern \"system\" fn clap_version_is_compatible",
+            "pub unsafe extern \"system\" fn plugin_has_init",
         ],
     );
 }
@@ -120,7 +129,7 @@ fn test_integration_raylib_api_compiles() {
         &[
             // C typedef aliases
             "pub type Texture2D = Texture;",
-            "pub type AudioCallback = Option<unsafe extern \"C\" fn(buffer: *mut c_void, frames: c_uint) -> c_void>;",
+            "pub type AudioCallback = Option<unsafe extern \"system\" fn(buffer: *mut c_void, frames: c_uint)>;",
             // Struct layout mapping
             "pub struct Color",
             "pub r: c_uchar,",
@@ -128,11 +137,35 @@ fn test_integration_raylib_api_compiles() {
             // Opaque handles
             "pub struct rAudioBuffer {",
             // Stub procedures with real signatures
-            "pub unsafe extern \"C\" fn InitWindow(width: c_int, height: c_int, title: *const c_char) -> c_void",
-            "pub unsafe extern \"C\" fn LoadSound(file_name: *const c_char) -> Sound",
-            "pub unsafe extern \"C\" fn SetAudioStreamCallback(stream: AudioStream, callback: AudioCallback) -> c_void",
+            "pub unsafe extern \"system\" fn InitWindow(width: c_int, height: c_int, title: *const c_char)",
+            "pub unsafe extern \"system\" fn LoadSound(file_name: *const c_char) -> Sound",
+            "pub unsafe extern \"system\" fn SetAudioStreamCallback(stream: AudioStream, callback: AudioCallback)",
             // Helpers with real bodies
-            "pub extern \"C\" fn raylib_color",
+            "pub extern \"system\" fn raylib_color",
         ],
+    );
+}
+
+#[test]
+fn test_integration_rust_syntax_compiles() {
+    transpile_and_compile(
+        Path::new("tests/fixtures/rust_syntax.carbide"),
+        &[
+            "pub unsafe extern \"system\" fn shift",
+            "pub unsafe extern \"system\" fn test_rust_syntax",
+            "let prod: usize = e1 as usize * e2;",
+        ],
+    );
+}
+
+#[test]
+fn test_integration_no_std_flag_compiles() {
+    transpile_and_compile_with_args(
+        Path::new("tests/fixtures/ffi_compute.carbide"),
+        &[
+            "#![no_std]",
+            "pub unsafe extern \"system\" fn compute",
+        ],
+        &["--no-std"],
     );
 }
