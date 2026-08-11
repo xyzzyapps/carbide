@@ -100,8 +100,8 @@ fn transform_item(item: &mut Item) {
 // ---------------------------------------------------------------------------
 
 fn transform_fn(func: &mut Function, is_top_level: bool) {
-    // Inject C-ABI attributes and calling convention only on top-level functions/procs
-    if is_top_level {
+    // Inject C-ABI attributes and calling convention only on top-level functions/procs (excluding main)
+    if is_top_level && func.name != "main" {
         func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
         if func.abi.is_none() {
             func.abi = Some("system".to_string());

@@ -5,17 +5,17 @@ description: Reference guide for working with the Carbide dialect, maintaining t
 
 ## Carbide Dialect Overview
 
-Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibility. It maps C-style primitive type keywords, postfix pointers (`*`) and references (`&`), C atomics, function-pointer callbacks, and attributes to standard FFI-compliant Rust code.
+Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibility. It maps C-style primitive type keywords, postfix pointers (`*`) and references (`&`), C atomics, function-pointer callbacks, and attributes to standard FFI-compliant Rust code, and directly drives `rustc` to compile dynamic DLLs (`.dll`), static archives (`.lib`), and standalone executables (`.exe`).
 
 ### 1. Naming & File Extensions
 - **Dialect Name**: Carbide
 - **File Extension**: `.carbide`
-- **Compiler Binary**: `carbide` (runs as `carbide <FILE> [-o <OUT>] [-c] [--std] [--no-std]`)
+- **Compiler Binary**: `carbide` (runs as `carbide <FILE> [-o <OUT>] [-c] [--dll] [--static] [--exe] [--lib] [--crate-type=TYPE] [--std] [--no-std]`)
 - **Cargo Command**: `cargo-carbide` (runs as `cargo carbide build [--no-std]`)
 
 ### 2. Syntax Rules
 - **Function/Procedure Declarations**:
-  - `fn name(...)`: Declares a **safe** function by default. Top-level free functions transpile to `#[no_mangle] pub extern "system" fn name(...)`.
+  - `fn name(...)`: Declares a **safe** function by default. Top-level free functions transpile to `#[no_mangle] pub extern "system" fn name(...)` (omitted on `main`).
   - `proc name(...)`: Declares an **unsafe** procedure by default. Top-level free procedures transpile to `#[no_mangle] pub unsafe extern "system" fn name(...)` and automatically wrap body statements in an `unsafe {}` block.
   - `impl` methods emit standard Rust methods (`pub fn` or `pub unsafe fn`) without `#[no_mangle]` to avoid global symbol collisions.
   - Functions returning `void` omit the return type arrow `-> ...` in Rust (transpiling to unit `()`).
@@ -49,9 +49,12 @@ Carbide is a low-level dialect of Rust designed for seamless C/C++ ABI compatibi
   - `cb: fn(a: int, b: void*) -> bool` $\rightarrow$ `Option<unsafe extern "system" fn(a: c_int, b: *mut c_void) -> bool>` (nullable C callback).
 - **Auto-Repr**:
   - Struct definitions automatically get `#[repr(C)]`.
-- **Standard Library Default & `--no-std` Option**:
-  - Default mode (`--std`) omits `#![no_std]`.
-  - Pass `--no-std` to explicitly emit `#![no_std]` for bare-metal targets.
+- **Target Compilation Flags**:
+  - `--dll` / `--cdylib`: Compiles dynamic shared library (`.dll`, `.so`, `.dylib`).
+  - `--static` / `--staticlib`: Compiles static library archive (`.lib`, `.a`).
+  - `--exe` / `--bin`: Compiles standalone executable (`.exe`).
+  - `--lib` / `--rlib`: Compiles standard Rust library (`.rlib`).
+  - `-o <FILE>`: Specifies source or binary output destination.
 
 ### 3. Reference Bindings & Fixtures
 - `tests/fixtures/atomics_operators.carbide` — Atomics, closures, operators, and `impl` methods.

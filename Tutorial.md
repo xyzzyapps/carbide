@@ -2,7 +2,7 @@
 
 Ah, Carbide. The language of modern high-performance FFI and C/C++-style Rust systems programming.
 
-Carbide is a low-level dialect of Rust designed to merge C/C++-style types, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`.
+Carbide is a low-level dialect of Rust designed to merge C/C++-style types, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`. It can also compile directly into dynamic DLLs (`--dll`), static libraries (`--static`), or native executables (`--exe`).
 
 Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
 
@@ -18,8 +18,7 @@ Multi-line comments look like this.
 fn add_two_ints(x1: int, x2: int) -> int; // Function prototype
 
 // Your entry point can be a function called "main".
-// Carbide will output it as a public extern "system" function with #[no_mangle].
-fn main() -> int {
+fn main() {
     ///////////////////////////////////////
     // Types
     ///////////////////////////////////////
@@ -105,11 +104,11 @@ fn main() -> int {
 
     // Pointers are declared with postfix `*` (or `mut*` / `const*`):
     let mut x: int = 42;
-    let mut px: int* = &mut x; // Transpiles to `*mut c_int`
+    let mut px: int* = mut& x; // Transpiles to `*mut c_int`
     let pcx: int const* = &x;   // Transpiles to `*const c_int`
 
     // References / borrows use postfix `&` (or `mut&` / `const&`):
-    let r_mut: int& = &mut x;       // Transpiles to `&mut c_int`
+    let r_mut: int& = mut& x;       // Transpiles to `&mut c_int`
     let r_const: int const& = &x;   // Transpiles to `&c_int`
 
     // Dereferencing uses the prefix `*` operator:
@@ -124,8 +123,6 @@ fn main() -> int {
     let e1: u32 = 10;
     let e2: usize = 20;
     let product: usize = e1 as usize * e2;
-
-    return 0;
 }
 
 ///////////////////////////////////////

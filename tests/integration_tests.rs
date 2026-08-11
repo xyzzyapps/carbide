@@ -185,3 +185,79 @@ fn test_integration_atomics_operators_compiles() {
         ],
     );
 }
+
+#[test]
+fn test_compile_cdylib_dll() {
+    let fixture = Path::new("tests/fixtures/ffi_compute.carbide");
+    let carbide_bin = Path::new("target").join("debug").join("carbide.exe");
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dll_out = format!("target/test_output_{}.dll", id);
+
+    let status = Command::new(&carbide_bin)
+        .arg(fixture)
+        .arg("--dll")
+        .arg("-o")
+        .arg(&dll_out)
+        .status()
+        .expect("Failed to run carbide binary");
+
+    assert!(status.success(), "carbide --dll compilation failed");
+    let out_path = Path::new(&dll_out);
+    assert!(out_path.exists(), "Expected DLL output file {:?}", dll_out);
+    let _ = fs::remove_file(out_path);
+}
+
+#[test]
+fn test_compile_staticlib() {
+    let fixture = Path::new("tests/fixtures/ffi_compute.carbide");
+    let carbide_bin = Path::new("target").join("debug").join("carbide.exe");
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let lib_out = format!("target/test_output_{}.lib", id);
+
+    let status = Command::new(&carbide_bin)
+        .arg(fixture)
+        .arg("--static")
+        .arg("-o")
+        .arg(&lib_out)
+        .status()
+        .expect("Failed to run carbide binary");
+
+    assert!(status.success(), "carbide --static compilation failed");
+    let out_path = Path::new(&lib_out);
+    assert!(out_path.exists(), "Expected static lib output file {:?}", lib_out);
+    let _ = fs::remove_file(out_path);
+}
+
+#[test]
+fn test_compile_executable() {
+    let carbide_bin = Path::new("target").join("debug").join("carbide.exe");
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let src_file = format!("target/test_app_{}.carbide", id);
+    let exe_out = format!("target/test_app_{}.exe", id);
+
+    let app_src = "fn main() { let x: int = 10; }";
+    fs::write(&src_file, app_src).expect("Failed to write app carbide file");
+
+    let status = Command::new(&carbide_bin)
+        .arg(&src_file)
+        .arg("--exe")
+        .arg("-o")
+        .arg(&exe_out)
+        .status()
+        .expect("Failed to run carbide binary");
+
+    assert!(status.success(), "carbide --exe compilation failed");
+    let exe_path = Path::new(&exe_out);
+    assert!(exe_path.exists(), "Expected exe output file {:?}", exe_out);
+
+    // Run the generated executable
+    let run_status = Command::new(exe_path)
+        .status()
+        .expect("Failed to run generated executable");
+    assert!(run_status.success(), "Generated executable failed with {:?}", run_status);
+
+    let _ = fs::remove_file(&src_file);
+    let _ = fs::remove_file(format!("target/test_app_{}.rs", id));
+    let _ = fs::remove_file(exe_path);
+    let _ = fs::remove_file(format!("target/test_app_{}.pdb", id));
+}

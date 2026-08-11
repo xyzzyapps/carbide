@@ -4,7 +4,7 @@
   <img src="assets/logo_transparent.png" alt="Carbide Logo" width="220" />
 </p>
 
-`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C/C++-style keywords, postfix pointer (`*`) and reference (`&`) syntax, C atomics, and FFI conventions into standard, FFI-compliant Rust code. The transpiler applies well-defined syntactic transformations and passes all other Rust code through unchanged, so **any valid Rust code works in a `.carbide` file**. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
+`carbide` is a transpiler and compiler frontend that compiles a custom dialect of Rust (`.carbide`) featuring C/C++-style keywords, postfix pointer (`*`) and reference (`&`) syntax, C atomics, and FFI conventions into standard, FFI-compliant Rust code, and directly drives `rustc` to produce static libraries (`.lib`/`.a`), dynamic DLLs (`.dll`/`.so`/`.dylib`), or executables (`.exe`). The transpiler applies well-defined syntactic transformations and passes all other Rust code through unchanged, so **any valid Rust code works in a `.carbide` file**. It includes an integrated driver to call `rustc` directly and a custom Cargo subcommand (`cargo-carbide`) that automatically manages FFI compilation targets and compiles pure static/dynamic libraries.
 
 ## Architecture
 
@@ -21,18 +21,34 @@ graph TD
     subgraph Transformation Passes
         Transform --> Pass1[Type Substitution int/void/char/atomic_int -> c_int/c_void/c_char/AtomicI32]
         Pass1 --> Pass2["Postfix Pointer & Reference Flips: T* -> *mut T, T& -> &mut T, T const& -> &T"]
-        Pass2 --> Pass3["System ABI on top-level fn (extern 'system') + #[no_mangle]"]
+        Pass2 --> Pass3["System ABI on top-level fn (extern 'system') + #[no_mangle] (omitted on main)"]
         Pass3 --> Pass4["proc -> unsafe fn + implicit unsafe{} body"]
         Pass4 --> Pass5["Auto #[repr(C)] on structs"]
-        Pass5 --> Pass6["Body Transforms (char* -> c_char, casts, binary mult disambiguation)"]
+        Pass5 --> Pass6["Body Transforms (char* -> c_char, mut& expressions, binary mult disambiguation)"]
     end
 
     Pass6 --> TransAST[Transformed AST]
     TransAST --> Emitter[Code Generator / Emitter]
     Emitter --> Output["Rust Code (.rs)"]
 
-    Output --> Driver[rustc / Cargo Compilation]
+    Output --> Driver["Driver (rustc: --crate-type=cdylib/staticlib/bin/lib)"]
+    Driver --> Artifacts["Binary Artifacts (.dll, .lib, .exe, .rlib)"]
 ```
+
+---
+
+## Target Compilation Flags
+
+`carbide` can directly compile `.carbide` source files into binary artifacts without manual `rustc` invocation:
+
+| Flag | Crate Type | Output Artifact | Description |
+|:---|:---|:---|:---|
+| `--dll` / `--cdylib` / `--dylib` | `cdylib` | `.dll` / `.so` / `.dylib` | Dynamic C-compatible shared library |
+| `--static` / `--staticlib` | `staticlib` | `.lib` / `.a` | Static C-compatible archive |
+| `--exe` / `--bin` | `bin` | `.exe` / ELF binary | Standalone executable |
+| `--lib` / `--rlib` | `lib` | `.rlib` | Rust library |
+| `--crate-type=<TYPE>` | Custom | Per crate type | Direct pass-through to `rustc` |
+| `-o <FILE>` | Custom | `.rs` or binary | Destination path for source or binary artifact |
 
 ---
 
@@ -82,11 +98,12 @@ Carbide exclusively uses C and C++ style postfix notation for both pointers (`*`
 - `T&` or `T mut&` $\rightarrow$ `&mut T` (Mutable reference / borrow)
 - `T const&` $\rightarrow$ `&T` (Constant reference / borrow)
 - `T**` $\rightarrow$ `*mut *mut T` (Nested pointers)
+- `mut& expr` $\rightarrow$ `&mut expr` (Mutable borrow expression)
 
 ### 4. Automatic FFI Attributes & Crate Directives
 - **Standard Library Default (`--std`)**: Carbide defaults to standard library mode and does not emit `#![no_std]`.
 - **Bare-Metal Mode (`--no-std`)**: Passing `--no-std` explicitly emits `#![no_std]` at the top of generated files for bare-metal / embedded FFI targets.
-- **System ABI on Top-Level Functions**: Free functions or procedures default to `extern "system"` calling convention with `#[no_mangle]`.
+- **System ABI on Top-Level Functions**: Free functions or procedures default to `extern "system"` calling convention with `#[no_mangle]` (omitted on `main` and `impl` methods).
 - **`impl` Block Methods**: Methods in `impl` blocks emit standard Rust methods without `#[no_mangle]` to avoid global symbol collisions.
 - **Function/Procedure Safety (`fn` vs `proc`)**:
   - `fn` declarations: Safe by default (emits standard `fn` in Rust, does **not** implicitly wrap body statements in unsafe).
@@ -128,13 +145,13 @@ type Texture2D = Texture;
 
 ## Workspace Layout
 
-- `src/main.rs`: Command Line Interface parser with `--std` and `--no-std` flags, and Cargo subcommand router.
+- `src/main.rs`: Command Line Interface parser with `--dll`, `--static`, `--exe`, `--lib`, `--std`, and `--no-std` flags, and Cargo subcommand router.
 - `src/lexer.rs`: Token definitions and tokenizer logic. Supports C keywords, postfix `*` and `&`, and extended operators (`|`, `%`, `^`, `?`, `~`, `@`, `$`).
 - `src/ast.rs`: Intermediate representation nodes. Function, struct, and type alias AST definitions.
 - `src/parser.rs`: Hand-written recursive descent parser for structural items. Enforces C++-style postfix pointer/reference notation.
 - `src/transform.rs`: AST and body transformation passes. Handles types, atomic mapping, pointer/reference flips, system ABI, and binary multiplication disambiguation.
 - `src/emitter.rs`: Formats the transformed AST back into compliant Rust code with conditional imports for libc and atomics.
-- `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile) across all reference fixtures in std and no-std modes.
+- `tests/integration_tests.rs`: Multi-stage pipeline verification test (transpile + `rustc` compile) across all reference fixtures in std, no-std, dll, staticlib, and exe modes.
 - `tests/fixture_tests.rs`: Fixture test runner verifying transpiled output structure in `--std` and `--no-std` modes.
 - `tests/fixtures/atomics_operators.carbide`: Atomics, closures, and operator expressions suite.
 - `tests/fixtures/clap_audio.carbide`: The **CLAP audio plugin ABI** (free-audio/clap 1.2) written in Carbide.
@@ -154,6 +171,15 @@ carbide main.carbide -o output.rs
 
 # Transpile in no_std mode (prepends #![no_std])
 carbide main.carbide -o output.rs --no-std
+
+# Compile directly to a dynamic DLL (.dll on Windows, .so on Linux)
+carbide plugin.carbide --dll -o plugin.dll
+
+# Compile directly to a static library archive (.lib on Windows, .a on Linux)
+carbide engine.carbide --static -o engine.lib
+
+# Compile directly to a native executable (.exe)
+carbide app.carbide --exe -o app.exe
 
 # Transpile and immediately compile using rustc
 carbide main.carbide -c

@@ -33,6 +33,26 @@ pub struct Cli {
     #[arg(short, long)]
     pub compile: bool,
 
+    /// Target crate type passed to rustc (e.g. bin, cdylib, staticlib, rlib, dylib, lib).
+    #[arg(long = "crate-type", value_name = "TYPE")]
+    pub crate_type: Option<String>,
+
+    /// Compile as a dynamic library / DLL (cdylib, implies -c).
+    #[arg(long, aliases = ["cdylib", "dylib"])]
+    pub dll: bool,
+
+    /// Compile as a static library archive (staticlib, implies -c).
+    #[arg(long = "static", aliases = ["staticlib"])]
+    pub staticlib: bool,
+
+    /// Compile as a standalone binary executable (bin, implies -c).
+    #[arg(long, aliases = ["bin"])]
+    pub exe: bool,
+
+    /// Compile as a Rust library (rlib/lib, implies -c).
+    #[arg(long = "lib", aliases = ["rlib"])]
+    pub rlib: bool,
+
     /// Emit `#![no_std]` at the top of generated Rust files (default is standard library mode).
     #[arg(long = "no-std", conflicts_with = "std")]
     pub no_std: bool,
@@ -102,31 +122,71 @@ fn main() {
         emitter.emit_program(&program);
         let generated_code = emitter.finish();
 
-        let output_path = match &cli.output {
-            Some(out) => out.clone(),
+        let effective_crate_type = if let Some(ct) = &cli.crate_type {
+            Some(ct.as_str())
+        } else if cli.dll {
+            Some("cdylib")
+        } else if cli.staticlib {
+            Some("staticlib")
+        } else if cli.exe {
+            Some("bin")
+        } else if cli.rlib {
+            Some("lib")
+        } else {
+            None
+        };
+
+        let should_compile = cli.compile || effective_crate_type.is_some();
+
+        let (rs_output_path, bin_output_path) = match &cli.output {
+            Some(out) => {
+                let ext = out.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let is_binary_ext = matches!(ext.to_lowercase().as_str(), "dll" | "lib" | "a" | "so" | "dylib" | "exe");
+                if should_compile && (is_binary_ext || (effective_crate_type.is_some() && ext != "rs")) {
+                    let mut rs_path = out.clone();
+                    rs_path.set_extension("rs");
+                    (rs_path, Some(out.clone()))
+                } else {
+                    (out.clone(), None)
+                }
+            }
             None => {
                 let mut out = input.clone();
                 out.set_extension("rs");
-                out
+                (out, None)
             }
         };
 
-        if let Err(e) = std::fs::write(&output_path, generated_code) {
+        if let Err(e) = std::fs::write(&rs_output_path, generated_code) {
             eprintln!("Error: Failed to write output file: {}", e);
             std::process::exit(1);
         }
 
-        println!("Successfully transpiled: {:?} -> {:?}", input, output_path);
+        println!("Successfully transpiled: {:?} -> {:?}", input, rs_output_path);
 
-        if cli.compile {
-            println!("Invoking rustc to compile: {:?}", output_path);
-            let status = std::process::Command::new("rustc")
-                .arg("--edition=2021")
-                .arg(&output_path)
-                .status();
+        if should_compile {
+            println!("Invoking rustc to compile: {:?}", rs_output_path);
+            let mut cmd = std::process::Command::new("rustc");
+            cmd.arg("--edition=2021");
+            cmd.arg(&rs_output_path);
+
+            if let Some(crate_type) = effective_crate_type {
+                cmd.arg(format!("--crate-type={}", crate_type));
+            }
+
+            if let Some(bin_out) = &bin_output_path {
+                cmd.arg("-o");
+                cmd.arg(bin_out);
+            }
+
+            let status = cmd.status();
             match status {
                 Ok(s) if s.success() => {
-                    println!("Compilation successful.");
+                    if let Some(bin_out) = &bin_output_path {
+                        println!("Compilation successful -> {:?}", bin_out);
+                    } else {
+                        println!("Compilation successful.");
+                    }
                 }
                 Ok(s) => {
                     eprintln!("rustc exited with non-zero status: {:?}", s);
@@ -258,11 +318,27 @@ fn main() {
                 let path = entry.path();
                 if path.is_file() {
                     let ext = path.extension().map(|e| e.to_str().unwrap().to_lowercase());
-                    if let Some(e) = ext {
-                        if e == "dll" || e == "lib" || e == "a" || e == "so" || e == "dylib" {
-                            let dest = original_target_debug.join(path.file_name().unwrap());
-                            let _ = std::fs::copy(&path, &dest);
+                    let is_artifact = match ext.as_deref() {
+                        Some("dll" | "lib" | "a" | "so" | "dylib" | "exe" | "rlib") => true,
+                        None => {
+                            // On Unix, executables often have no extension
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                if let Ok(metadata) = path.metadata() {
+                                    metadata.permissions().mode() & 0o111 != 0
+                                } else {
+                                    false
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            false
                         }
+                        _ => false,
+                    };
+                    if is_artifact {
+                        let dest = original_target_debug.join(path.file_name().unwrap());
+                        let _ = std::fs::copy(&path, &dest);
                     }
                 }
             }
