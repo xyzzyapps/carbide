@@ -303,7 +303,7 @@ fn test_fixture_rust_syntax() {
     assert!(!output.contains("#![no_std]"), "Unexpected #![no_std]");
     assert!(output.contains("pub struct Point"), "Missing Point struct");
     assert!(
-        output.contains("pub unsafe extern \"system\" fn shift"),
+        output.contains("pub unsafe fn shift"),
         "Missing shift method"
     );
     assert!(
@@ -563,6 +563,32 @@ fn test_fixture_raylib_api() {
         output.contains("pub extern \"system\" fn vector2_length_squared"),
         "Missing vector2 helper"
     );
+}
+
+#[test]
+fn test_fixture_atomics_operators() {
+    let fixture = Path::new("tests/fixtures/atomics_operators.carbide");
+    assert!(fixture.exists(), "Fixture file missing: {:?}", fixture);
+
+    let output = transpile_fixture(fixture);
+
+    // Verify atomics import
+    assert!(output.contains("use core::sync::atomic::*;"), "Missing core::sync::atomic import");
+    assert!(output.contains("pub val: AtomicI32,"), "Missing AtomicI32 struct field");
+    assert!(output.contains("pub active: AtomicBool,"), "Missing AtomicBool struct field");
+    assert!(output.contains("pub total: AtomicUsize,"), "Missing AtomicUsize struct field");
+
+    // Verify impl methods don't have #[no_mangle]
+    assert!(!output.contains("#[no_mangle]\n    pub fn new"), "impl methods must not have #[no_mangle]");
+    assert!(!output.contains("#[no_mangle]\n    pub fn increment"), "impl methods must not have #[no_mangle]");
+
+    // Verify body char* cast mapping
+    assert!(output.contains("as *mut c_char;"), "as char* should map to *mut c_char");
+    assert!(output.contains("as *const c_char;"), "as char const* should map to *const c_char");
+
+    // Verify top-level function gets #[no_mangle] and extern system
+    assert!(output.contains("#[no_mangle]"), "Missing #[no_mangle] on free proc");
+    assert!(output.contains("pub unsafe extern \"system\" fn test_operators_and_closures"), "Missing test_operators_and_closures");
 }
 
 #[test]

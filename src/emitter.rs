@@ -83,6 +83,19 @@ impl Emitter {
         ];
         let needs_libc = libc_types.iter().any(|t| items_src.contains(t));
 
+        let atomic_types = [
+            "AtomicBool",
+            "AtomicI32",
+            "AtomicU32",
+            "AtomicI64",
+            "AtomicU64",
+            "AtomicIsize",
+            "AtomicUsize",
+            "AtomicPtr",
+            "Ordering",
+        ];
+        let needs_atomics = atomic_types.iter().any(|t| items_src.contains(t));
+
         if self.no_std {
             self.output.push_str("#![no_std]\n");
         }
@@ -96,6 +109,9 @@ impl Emitter {
         self.output.push_str("use core::ffi::*;\n");
         if needs_libc {
             self.output.push_str("use libc::*;\n");
+        }
+        if needs_atomics {
+            self.output.push_str("use core::sync::atomic::*;\n");
         }
         self.output.push('\n');
         self.output.push_str(&items_src);
@@ -390,5 +406,19 @@ mod tests {
 
         // Both structs/aliases get their usual attributes
         assert!(output.contains("#[repr(C)]"), "Missing repr(C) on struct");
+    }
+
+    #[test]
+    fn test_emitter_atomics_import() {
+        let src = r#"
+            struct AtomicCounter {
+                val: atomic_int,
+                flag: atomic_bool
+            }
+        "#;
+        let output = transpile(src);
+        assert!(output.contains("use core::sync::atomic::*;"), "Missing core::sync::atomic import");
+        assert!(output.contains("pub val: AtomicI32,"), "Missing AtomicI32 field");
+        assert!(output.contains("pub flag: AtomicBool,"), "Missing AtomicBool field");
     }
 }

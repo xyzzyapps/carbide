@@ -597,6 +597,10 @@ impl<'s> Parser<'s> {
             Some(Token::Ampersand) => {
                 return Err("Prefix reference syntax ('&T' / '&mut T') is not allowed in Carbide; use C++-style postfix reference syntax ('T&' / 'T const&' / 'T mut&') instead".to_string());
             }
+            // Disallow C-style prefix const type syntax (`const T*`, `const T&`)
+            Some(Token::Const) => {
+                return Err("Prefix 'const' type syntax ('const T*') is not allowed in Carbide; use C++-style postfix syntax ('T const*') instead".to_string());
+            }
             // C primitive keywords
             Some(Token::Void) => {
                 self.next_token();
@@ -820,6 +824,13 @@ fn token_to_str(tok: &Token) -> String {
         Token::Bang => "!".to_string(),
         Token::Lt => "<".to_string(),
         Token::Gt => ">".to_string(),
+        Token::Pipe => "|".to_string(),
+        Token::Percent => "%".to_string(),
+        Token::Caret => "^".to_string(),
+        Token::Question => "?".to_string(),
+        Token::Tilde => "~".to_string(),
+        Token::At => "@".to_string(),
+        Token::Dollar => "$".to_string(),
     }
 }
 
@@ -1038,5 +1049,13 @@ mod tests {
         let src_mut_ptr = "struct S { a: *mut int }";
         let tokens = Lexer::new(src_mut_ptr).tokenize_with_positions().unwrap();
         assert!(Parser::new(src_mut_ptr, tokens).parse_program().is_err());
+
+        let src_prefix_const_ptr = "struct S { a: const int* }";
+        let tokens = Lexer::new(src_prefix_const_ptr).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_prefix_const_ptr, tokens).parse_program().is_err());
+
+        let src_prefix_const_ref = "struct S { a: const int& }";
+        let tokens = Lexer::new(src_prefix_const_ref).tokenize_with_positions().unwrap();
+        assert!(Parser::new(src_prefix_const_ref, tokens).parse_program().is_err());
     }
 }

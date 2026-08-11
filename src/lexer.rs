@@ -68,6 +68,13 @@ pub enum Token {
     Bang,           // `!`
     Lt,             // `<`
     Gt,             // `>`
+    Pipe,           // `|`
+    Percent,        // `%`
+    Caret,          // `^`
+    Question,       // `?`
+    Tilde,          // `~`
+    At,             // `@`
+    Dollar,         // `$`
 }
 
 /// Lexer for a Carbide source string.
@@ -282,6 +289,13 @@ impl<'a> Lexer<'a> {
                 '!'  => tokens.push((Token::Bang,         cur_pos)),
                 '<'  => tokens.push((Token::Lt,           cur_pos)),
                 '>'  => tokens.push((Token::Gt,           cur_pos)),
+                '|'  => tokens.push((Token::Pipe,         cur_pos)),
+                '%'  => tokens.push((Token::Percent,      cur_pos)),
+                '^'  => tokens.push((Token::Caret,        cur_pos)),
+                '?'  => tokens.push((Token::Question,     cur_pos)),
+                '~'  => tokens.push((Token::Tilde,        cur_pos)),
+                '@'  => tokens.push((Token::At,           cur_pos)),
+                '$'  => tokens.push((Token::Dollar,       cur_pos)),
                 other => return Err(format!("Unexpected character: '{}'", other)),
             }
         }
@@ -398,6 +412,31 @@ mod tests {
                 Token::CloseParen,
                 Token::OpenBrace,
                 Token::CloseBrace,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_extended_operators() {
+        let source = "|a| a % 2 ^ 1 ? ~x @ $var";
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Pipe,
+                Token::Ident("a".to_string()),
+                Token::Pipe,
+                Token::Ident("a".to_string()),
+                Token::Percent,
+                Token::IntLit("2".to_string()),
+                Token::Caret,
+                Token::IntLit("1".to_string()),
+                Token::Question,
+                Token::Tilde,
+                Token::Ident("x".to_string()),
+                Token::At,
+                Token::Dollar,
+                Token::Ident("var".to_string()),
             ]
         );
     }

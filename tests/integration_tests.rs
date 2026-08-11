@@ -151,7 +151,7 @@ fn test_integration_rust_syntax_compiles() {
     transpile_and_compile(
         Path::new("tests/fixtures/rust_syntax.carbide"),
         &[
-            "pub unsafe extern \"system\" fn shift",
+            "pub unsafe fn shift",
             "pub unsafe extern \"system\" fn test_rust_syntax",
             "let prod: usize = e1 as usize * e2;",
         ],
@@ -167,5 +167,21 @@ fn test_integration_no_std_flag_compiles() {
             "pub unsafe extern \"system\" fn compute",
         ],
         &["--no-std"],
+    );
+}
+
+#[test]
+fn test_integration_atomics_operators_compiles() {
+    transpile_and_compile(
+        Path::new("tests/fixtures/atomics_operators.carbide"),
+        &[
+            "use core::sync::atomic::*;",
+            "pub val: AtomicI32,",
+            "pub active: AtomicBool,",
+            "pub total: AtomicUsize,",
+            "pub fn new(init: c_int) -> Counter",
+            "pub fn increment(self: &mut Counter, step: c_int) -> c_int",
+            "pub unsafe extern \"system\" fn test_operators_and_closures",
+        ],
     );
 }

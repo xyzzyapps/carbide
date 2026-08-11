@@ -1,0 +1,43 @@
+// atomics_operators.carbide - Tests C Atomics, extended operators, closures, and impl blocks
+//
+
+struct Counter {
+    val: atomic_int,
+    active: atomic_bool,
+    total: atomic_size_t
+}
+
+impl Counter {
+    fn new(init: int) -> Counter {
+        return Counter {
+            val: AtomicI32::new(init),
+            active: AtomicBool::new(true),
+            total: AtomicUsize::new(0),
+        };
+    }
+
+    fn increment(self: Counter&, step: int) -> int {
+        let old: int = self.val.fetch_add(step, Ordering::SeqCst);
+        return old;
+    }
+}
+
+proc test_operators_and_closures(a: int, b: int) -> int {
+    // Bitwise OR, XOR, modulo
+    let or_val: int = a | b;
+    let xor_val: int = a ^ b;
+    let mod_val: int = a % (b + 1);
+
+    // Closures using pipe tokens
+    let double_it = |x: int| x * 2;
+    let doubled: int = double_it(or_val);
+
+    // Pointer casting with char* and char const*
+    let mut num: int = 100;
+    let raw_ptr: void* = (mut& num as int*) as void*;
+    let c_ptr: char* = raw_ptr as char*;
+    let cc_ptr: char const* = raw_ptr as char const*;
+
+    let res: int = doubled + xor_val + mod_val;
+    return res;
+}

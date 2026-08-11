@@ -18,3 +18,10 @@
 - [x] 11. Update unit tests, fixture tests (`tests/fixture_tests.rs`), and integration tests (`tests/integration_tests.rs`).
 - [x] 12. Run all tests to verify correctness (`cargo test`).
 - [x] 13. Update `SPEC.md`, `README.md`, `Tutorial.md`, and `.agents/skills/carbide_transpiler/SKILL.md`.
+- [x] 14. Extend `src/lexer.rs` with token coverage for `|`, `%`, `^`, `?`, `~`, `@`, `$`.
+- [x] 15. Map `char*` to `c_char` in body pointer casts and annotations (`src/transform.rs`).
+- [x] 16. Omit `#[no_mangle]` on `impl` methods to prevent global symbol collisions (`src/transform.rs`).
+- [x] 17. Add diagnostic for prefix `const T*` / `const T&` syntax in `src/parser.rs`.
+- [x] 18. Add support for C/C++ Atomics mapping with `core::sync::atomic::*` in `src/transform.rs` and `src/emitter.rs`.
+- [x] 19. Add support for `mut& num` expressions and new fixture `tests/fixtures/atomics_operators.carbide` (`cargo test`).
+- [x] 20. Update `SPEC.md`, `README.md`, `Tutorial.md`, and `.agents/skills/carbide_transpiler/SKILL.md`.

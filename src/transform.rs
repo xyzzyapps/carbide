@@ -50,6 +50,15 @@ const TYPE_MAP: &[(&str, &str)] = &[
     ("short",   "c_short"),
     ("float",   "c_float"),
     ("double",  "c_double"),
+    // C Atomics mapping to Rust core::sync::atomic types
+    ("atomic_bool",        "AtomicBool"),
+    ("atomic_int",         "AtomicI32"),
+    ("atomic_uint",        "AtomicU32"),
+    ("atomic_long",        "AtomicI64"),
+    ("atomic_ulong",       "AtomicU64"),
+    ("atomic_size_t",      "AtomicUsize"),
+    ("atomic_intptr_t",    "AtomicIsize"),
+    ("atomic_uintptr_t",   "AtomicUsize"),
     // NB: `char` is intentionally omitted — it is also a Rust keyword and
     // replacing it blindly inside body text would break char literals.
     // Struct field / parameter `char` types are handled via map_type().
@@ -62,7 +71,7 @@ const TYPE_MAP: &[(&str, &str)] = &[
 /// Apply all Carbide transforms to a parsed program in place.
 ///
 /// Transforms applied:
-/// - Function signatures: C-ABI (`extern "C"`), `#[no_mangle]`, `pub`,
+/// - Function signatures: C-ABI (`extern "system"`), `#[no_mangle]`, `pub`,
 ///   `unsafe` (for `proc`), type mapping, postfix-pointer flip.
 /// - Struct definitions: `#[repr(C)]`, `pub`, type mapping.
 /// - Function bodies: word-boundary type substitution + `as TYPE*` pointer flip.
@@ -74,10 +83,10 @@ pub fn transform_program(program: &mut Program) {
 
 fn transform_item(item: &mut Item) {
     match item {
-        Item::Fn(f)          => transform_fn(f),
+        Item::Fn(f)          => transform_fn(f, true),
         Item::Struct(s)      => transform_struct(s),
         Item::Impl { methods, .. } => {
-            for m in methods { transform_fn(m); }
+            for m in methods { transform_fn(m, false); }
         }
         Item::TypeAlias { ty, .. } => transform_type(ty),
         // Enum, Use, Raw — no signature to transform; body text is left as-is
@@ -90,11 +99,13 @@ fn transform_item(item: &mut Item) {
 // Function transformation
 // ---------------------------------------------------------------------------
 
-fn transform_fn(func: &mut Function) {
-    // Inject C-ABI attributes and calling convention
-    func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
-    if func.abi.is_none() {
-        func.abi = Some("system".to_string());
+fn transform_fn(func: &mut Function, is_top_level: bool) {
+    // Inject C-ABI attributes and calling convention only on top-level functions/procs
+    if is_top_level {
+        func.attrs.insert(0, Attribute { tokens: "no_mangle".to_string() });
+        if func.abi.is_none() {
+            func.abi = Some("system".to_string());
+        }
     }
 
     // Map parameter types
@@ -184,6 +195,9 @@ pub fn apply_body_transforms(src: &str) -> String {
 
     // Postfix pointer and reference type annotations in body: `: WORD*`, `: WORD&`, etc.
     s = flip_colon_type_annotations(&s);
+
+    // Prefix mut& borrow expressions: `mut& expr` -> `&mut expr`
+    s = flip_prefix_mut_ref_expressions(&s);
 
     s
 }
@@ -380,7 +394,12 @@ fn flip_as_pointer_casts(src: &str) -> String {
                                     Modifier::MutRef => ptr_prefix.push_str("&mut "),
                                 }
                             }
-                            result.push_str(&format!("as {}{}", ptr_prefix, type_name));
+                            let final_type_name = if type_name == "char" {
+                                "c_char"
+                            } else {
+                                type_name
+                            };
+                            result.push_str(&format!("as {}{}", ptr_prefix, final_type_name));
                             i = scan_pos;
                             continue;
                         }
@@ -521,7 +540,12 @@ fn flip_colon_type_annotations(src: &str) -> String {
                                     Modifier::MutRef => ptr_prefix.push_str("&mut "),
                                 }
                             }
-                            result.push_str(&format!(": {}{}", ptr_prefix, type_name));
+                            let final_type_name = if type_name == "char" {
+                                "c_char"
+                            } else {
+                                type_name
+                            };
+                            result.push_str(&format!(": {}{}", ptr_prefix, final_type_name));
                             i = scan_pos;
                             continue;
                         }
@@ -530,6 +554,32 @@ fn flip_colon_type_annotations(src: &str) -> String {
             }
         }
 
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+
+    result
+}
+
+/// Flip `mut& expr` prefix mutable borrow expressions in body source text to `&mut expr`.
+fn flip_prefix_mut_ref_expressions(src: &str) -> String {
+    let mut result = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if i + 4 <= len && &bytes[i..i+4] == b"mut&" {
+            let before_ok = i == 0 || !(bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_');
+            if before_ok {
+                result.push_str("&mut ");
+                i += 4;
+                while i < len && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                continue;
+            }
+        }
         result.push(bytes[i] as char);
         i += 1;
     }
@@ -617,5 +667,32 @@ mod tests {
         let src3 = "let total2 = a as i32 * 5;";
         let out3 = apply_body_transforms(src3);
         assert_eq!(out3, "let total2 = a as i32 * 5;");
+    }
+
+    #[test]
+    fn test_char_pointer_and_atomics_and_impl_methods() {
+        let src = "let s = p as char*; let c = p as char const*; let a: atomic_int = 0;";
+        let out = apply_body_transforms(src);
+        assert!(out.contains("as *mut c_char"), "char* should become *mut c_char");
+        assert!(out.contains("as *const c_char"), "char const* should become *const c_char");
+        assert!(out.contains("AtomicI32"), "atomic_int should become AtomicI32");
+
+        let impl_src = "impl Point { fn new(x: float, y: float) -> Point { return Point { x, y }; } }";
+        let tokens = Lexer::new(impl_src).tokenize_with_positions().unwrap();
+        let mut program = Parser::new(impl_src, tokens).parse_program().unwrap();
+        transform_program(&mut program);
+        if let Item::Impl { methods, .. } = &program.items[0] {
+            assert!(!methods[0].attrs.iter().any(|a| a.tokens == "no_mangle"), "impl methods must not have #[no_mangle]");
+        } else {
+            panic!("Expected Impl");
+        }
+    }
+
+    #[test]
+    fn test_mut_ref_expression_flip() {
+        let src = "let raw = (mut& num as int*) as void*; let r = mut& x;";
+        let out = apply_body_transforms(src);
+        assert!(out.contains("(&mut num as *mut c_int) as *mut c_void"), "mut& cast should flip properly: {out}");
+        assert!(out.contains("let r = &mut x;"), "mut& x should flip to &mut x");
     }
 }

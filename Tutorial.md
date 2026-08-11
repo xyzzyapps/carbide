@@ -2,7 +2,7 @@
 
 Ah, Carbide. The language of modern high-performance FFI and C/C++-style Rust systems programming.
 
-Carbide is a low-level dialect of Rust designed to merge C/C++-style types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`.
+Carbide is a low-level dialect of Rust designed to merge C/C++-style types, atomic types, postfix pointer (`*`), and postfix reference (`&`) semantics directly into standard, FFI-compliant Rust. It gives you the raw feel of C/C++ notation combined with the structure and compiler benefits of Rust, managing memory layouts automatically. By default, it targets the standard library, while bare-metal projects can pass `--no-std`.
 
 Just be aware of Carbide's specific safe (`fn`) vs unsafe (`proc`) declarations, and it will take you as far as you need to go in systems FFI.
 
@@ -54,6 +54,10 @@ fn main() -> int {
     // (If size_t or other libc types are used, use libc::*; is automatically imported)
     let mut size: size_t = 0;
 
+    // C Atomics (use core::sync::atomic::*; is automatically imported)
+    let mut flag: atomic_bool = AtomicBool::new(true);
+    let mut counter: atomic_int = AtomicI32::new(0);
+
     // String literals are represented using standard Rust double quotes.
     let mut a_string: char const* = "This is a string";
 
@@ -66,6 +70,15 @@ fn main() -> int {
     let mut diff: int = 2 - 1;  // => 1
     let mut prod: int = 2 * 1;  // => 2
     let mut quot: int = 1 / 2;  // => 0 (truncated towards 0)
+    let mut rem: int = 7 % 3;   // => 1 (modulo)
+
+    // Bitwise operators
+    let mut bitwise_or: int = 1 | 2;   // => 3
+    let mut bitwise_xor: int = 3 ^ 1;  // => 2
+
+    // Closures
+    let add_ten = |n: int| n + 10;
+    let computed: int = add_ten(5); // => 15
 
     // Comparisons return standard boolean flags in Rust:
     let mut is_equal: bool = 3 == 2; // => false
@@ -162,6 +175,7 @@ struct Point {
 }
 
 impl Point {
+    // Methods inside impl blocks emit as standard Rust methods
     fn new(x: float, y: float) -> Point {
         return Point { x, y };
     }
